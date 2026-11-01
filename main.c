@@ -12,6 +12,9 @@
 #include "math/aabb2.h"
 #include "uno.h"
 #include "files/helpers.h"
+#define MOG_MODULE "VRA"
+#define MOG_LEVEL MOG_WARNING
+#include "utils/mog.h"
 
 #define MAGIC_NUM 0xEC70
 
@@ -46,13 +49,15 @@ typedef struct {
     point_graph graph;
 } shape_render_info;
 
-typedef struct {
+typedef struct shape_t{
     vec2 min, max;
     shape_render_info render;
     linked_list_t *shape;
     buffer points_buffer;
     buffer slice_buffer;
     int current_slice;
+    bool is_contour;
+    struct shape_t *link;
 } shape_t;
 
 theme_palette palette = {
@@ -67,12 +72,18 @@ u64 point_count;
 linked_list_t *shape_list;
 #define all_shapes(action) for (linked_list_node_t *head = shape_list->head; head; head = head->next) { shape_t *shape = head->data; if (!shape) continue; action }
 linked_list_t *selected_list;
+#define selected_shapes(action) for (linked_list_node_t *head = selected_list->head; head; head = head->next) { shape_t *shape = head->data; if (!shape) continue; action }
 
 linked_list_node_t* is_selected(shape_t *s){
     if (!selected_list) return 0;
-    for (linked_list_node_t *head = selected_list->head; head; head = head->next)
-        if (head->data == s) return head;
+    selected_shapes({
+        if (shape == s) return head;
+    })
     return 0;
+}
+
+void unselect_all(){
+    while (selected_list->head) linked_list_remove(selected_list, selected_list->head);
 }
 
 buffer serialize(){
@@ -90,7 +101,7 @@ buffer serialize(){
         shape_render_info info = shape->render;
         info.graph.graph = (void*)(buf.cursor + sizeof(shape_render_info) + (info.graph.num_slices * sizeof(point_graph_slice)));
         info.graph.slices = (void*)(buf.cursor + sizeof(shape_render_info));
-        print("Graph at %x slices at %x",info.graph.graph,info.graph.slices);
+        mog(VERBOSE,"Graph at %x slices at %x",info.graph.graph,info.graph.slices);
         buffer_write_lim(&buf, (char*)&info, sizeof(shape_render_info));
         for (u64 i = 0; i < shape->render.graph.num_slices; i++){
             buffer_write_lim(&buf, (char*)&shape->render.graph.slices[i], sizeof(point_graph_slice));
@@ -101,7 +112,7 @@ buffer serialize(){
     });
     
     write_full_file("/home/di/playground/hey.vro", buf.buffer, buf.buffer_size);
-    print("Wrote %i vros",shape_count);
+    mog(VERBOSE,"Wrote %i vros",shape_count);
     
     return buf;
     
@@ -116,15 +127,40 @@ void recalc_shape_size(shape_t *shape){
     if (!shape || !shape->shape) return;
     shape->min = (vec2){FLOAT_MAX,FLOAT_MAX};
     shape->max = (vec2){};
-    for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
-        vector_point *p = head->data;
-        if (!p) continue;
-        vec2 loc = vector2_scale(p->location,zoom);
-        if (loc.x < shape->min.x){ shape->min.x = loc.x; }
-        if (loc.y < shape->min.y){ shape->min.y = loc.y; }
-        if (loc.x > shape->max.x){ shape->max.x = loc.x; }
-        if (loc.y > shape->max.y){ shape->max.y = loc.y; }
+    shape_t *cur_shape = shape;
+    while (cur_shape){
+        for (linked_list_node_t *head = cur_shape->shape->head; head; head = head->next){
+            vector_point *p = head->data;
+            if (!p) continue;
+            vec2 loc = vector2_scale(p->location,zoom);
+            if (loc.x < cur_shape->min.x){ cur_shape->min.x = loc.x; }
+            if (loc.y < cur_shape->min.y){ cur_shape->min.y = loc.y; }
+            if (loc.x > cur_shape->max.x){ cur_shape->max.x = loc.x; }
+            if (loc.y > cur_shape->max.y){ cur_shape->max.y = loc.y; }
+        }
+        cur_shape = cur_shape->link;
     }
+}
+
+void recalc_slice(shape_t *shape,int start, int count){
+    point_graph_slice new_slice = {
+       .close = true,
+       .start = start,
+       .count = count,
+       .curve_type = point_graph_curve_quad_only,
+       .max_curve_points = 1,
+    };
+    if (!shape->render.graph.num_slices){
+        shape->slice_buffer = buffer_create(sizeof(point_graph_slice), buffer_can_grow);
+        buffer_write_lim(&shape->slice_buffer, (char*)&new_slice, sizeof(point_graph_slice));
+        shape->current_slice = 0;
+    } else {
+        if (shape->slice_buffer.cursor <= shape->current_slice * sizeof(point_graph_slice)) {
+            buffer_write_lim(&shape->slice_buffer, (char*)&new_slice, sizeof(point_graph_slice));
+        } else 
+            ((point_graph_slice*)shape->slice_buffer.buffer)[shape->current_slice] = new_slice;
+    }
+    shape->render.graph.num_slices = shape->current_slice+1;
 }
 
 void recalc_shape(shape_t *shape, vector_point *new_point){
@@ -137,41 +173,49 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
         if (loc.x > shape->max.x){ shape->max.x = loc.x; }
         if (loc.y > shape->max.y){ shape->max.y = loc.y; }
     }
-    size_t count = linked_list_count(shape->shape);
+    if (shape->link) recalc_all = true;
+    size_t count = 0;
+    shape_t *cur_shape = shape;
+    while (cur_shape){
+        count += linked_list_count(cur_shape->shape);
+        cur_shape = cur_shape->link;
+    }
     if (!shape->points_buffer.buffer) shape->points_buffer = buffer_create(sizeof(point_entry) * count, buffer_can_grow);
     
     if (recalc_all){
         buffer_wipe(&shape->points_buffer);
-        for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
-            vector_point *p = head->data;
-            if (!p) continue;
-            point_entry entry = {
-                .pos = vector2_sub(vector2_scale(p->location, zoom), shape->min),
-                .on_curve = !p->control,
-            };
-            buffer_write_lim(&shape->points_buffer, (const char*)&entry, sizeof(point_entry));
-        }   
+        cur_shape = shape;
+        shape->current_slice = 0;
+        int total = 0;
+        while (cur_shape){
+            int c = 0;
+            for (linked_list_node_t *head = cur_shape->shape->head; head; head = head->next){
+                vector_point *p = head->data;
+                if (!p) continue;
+                point_entry entry = {
+                    .pos = vector2_sub(vector2_scale(p->location, zoom), shape->min),
+                    .on_curve = !p->control,
+                };
+                buffer_write_lim(&shape->points_buffer, (const char*)&entry, sizeof(point_entry));
+                c++;
+            }
+            recalc_slice(shape, total, total+c);
+            cur_shape = cur_shape->link;
+            if (cur_shape) shape->current_slice++;
+            total += c;
+        }
+        if (total != count){
+            mog(WARNING,"Mismatch in size, expected %i, found %i",count,total);
+        }
     } else {
         point_entry entry = {
             .pos = vector2_sub(vector2_scale(new_point->location, zoom), shape->min),
             .on_curve = !new_point->control,
         };
         buffer_write_lim(&shape->points_buffer, (const char*)&entry, sizeof(point_entry));
+        recalc_slice(shape, shape->render.graph.slices[shape->current_slice].start, shape->render.graph.slices[shape->current_slice].count+1);
     }
-    if (!shape->render.graph.num_slices){
-        shape->slice_buffer = buffer_create(sizeof(point_graph_slice), buffer_can_grow);
-        buffer_write_lim(&shape->slice_buffer, (char*)&(point_graph_slice){
-           .close = true,
-           .start = 0,
-           .count = count,
-           .curve_type = point_graph_curve_quad_only,
-           .max_curve_points = 1,
-       }, sizeof(point_graph_slice));
-        shape->current_slice = 0;
-        shape->render.graph.num_slices++;
-    } else {
-        ((point_graph_slice*)shape->slice_buffer.buffer)[shape->current_slice].count = count;
-    }
+    
     shape->render.graph = (point_graph){
         .graph = shape->points_buffer.buffer,
         .num_points = count,
@@ -179,7 +223,17 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
         .num_slices = shape->render.graph.num_slices,
         .size = vector2_sub(shape->max, shape->min)
     };
-    print("Recalc'd shape with new min %f,%f max %f,%f points: %i",shape->min.x,shape->min.y,shape->max.x,shape->max.y,shape->render.graph.num_points);
+    mog(INFO,"Recalc'd shape with new min %f,%f max %f,%f points: %i slices: %i",shape->min.x,shape->min.y,shape->max.x,shape->max.y,shape->render.graph.num_points,shape->render.graph.num_slices);
+    if (shape->render.graph.num_slices > 1){
+        for (int i = 0; i < shape->render.graph.num_points; i++){
+            point_entry p = shape->render.graph.graph[i];
+            mog(VERBOSE,"Point %f,%f",p.pos.x,p.pos.y);
+        }
+        for (int i = 0; i < shape->render.graph.num_slices; i++){
+            point_graph_slice sl = shape->render.graph.slices[i];
+            mog(VERBOSE,"Slice %i from %i to %i",i,sl.start,sl.count);
+        }
+    }
 }
 
 void append_point(shape_t *shape, int_point point, bool control){
@@ -218,7 +272,7 @@ const int border_size = 3;
 const int inner_size = handle_size-(border_size*2);
 
 void render_shape(shape_t *shape){
-    if (!shape->shape || !shape->render.graph.graph) return;
+    if (!shape->shape || !shape->render.graph.graph || shape->is_contour) return;
     fb_render_path(&ctx, (gpu_point){
        .x = shape->min.x + pan.x,
        .y = shape->min.y + pan.y,
@@ -302,8 +356,10 @@ void shape_select_toggle(int tag, gpu_point point){
     linked_list_node_t *sel = is_selected(s);
     if (sel)
         linked_list_remove(selected_list, sel);
-    else
+    else {
         linked_list_push(selected_list, s);
+        current_shape = s;
+    }
     recalc_all();
     uno_refresh();
 }
@@ -382,6 +438,20 @@ void mouse_handle(mouse_data mouse, u64 dtms){
         move_point(out_shape,out_node,loc);
 }
 
+void join_contours(){
+    shape_t *latest = 0;
+    selected_shapes({
+        if (latest) {
+            shape->is_contour = true;
+            latest->link = shape;
+        } else shape->is_contour = false;
+        latest = shape;
+    });
+    mog(INFO,"Joined %i contours",linked_list_count(selected_list));
+    unselect_all();
+    recalc_all();
+}
+
 int main(int argc, char *argv[]){
     request_app_ctx(&ctx);
     
@@ -417,6 +487,7 @@ int main(int argc, char *argv[]){
                     if (is_mod_pressed(KEY_LEFTALT, true) && ev.key == KEY_ESC) halt(0);
                     if (ev.key == KEY_TAB) current_shape = new_shape();
                     if (ev.key == KEY_ENTER) serialize();
+                    if (ev.key == KEY_J) join_contours();
                 }
             }
         }
