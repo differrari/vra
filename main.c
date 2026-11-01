@@ -56,7 +56,7 @@ typedef struct shape_t{
     buffer points_buffer;
     buffer slice_buffer;
     int current_slice;
-    bool is_contour;
+    struct shape_t *contour_of;
     struct shape_t *link;
 } shape_t;
 
@@ -125,6 +125,7 @@ color current_shape_outline = 0xff000000;
 
 void recalc_shape_size(shape_t *shape){
     if (!shape || !shape->shape) return;
+    if (shape->contour_of) recalc_shape_size(shape->contour_of);
     shape->min = (vec2){FLOAT_MAX,FLOAT_MAX};
     shape->max = (vec2){};
     shape_t *cur_shape = shape;
@@ -133,10 +134,10 @@ void recalc_shape_size(shape_t *shape){
             vector_point *p = head->data;
             if (!p) continue;
             vec2 loc = vector2_scale(p->location,zoom);
-            if (loc.x < cur_shape->min.x){ cur_shape->min.x = loc.x; }
-            if (loc.y < cur_shape->min.y){ cur_shape->min.y = loc.y; }
-            if (loc.x > cur_shape->max.x){ cur_shape->max.x = loc.x; }
-            if (loc.y > cur_shape->max.y){ cur_shape->max.y = loc.y; }
+            if (loc.x < shape->min.x){ shape->min.x = loc.x; }
+            if (loc.y < shape->min.y){ shape->min.y = loc.y; }
+            if (loc.x > shape->max.x){ shape->max.x = loc.x; }
+            if (loc.y > shape->max.y){ shape->max.y = loc.y; }
         }
         cur_shape = cur_shape->link;
     }
@@ -165,6 +166,7 @@ void recalc_slice(shape_t *shape,int start, int count){
 
 void recalc_shape(shape_t *shape, vector_point *new_point){
     if (!shape->shape) return;
+    if (shape->contour_of) recalc_shape(shape->contour_of, 0);
     bool recalc_all = !new_point;
     if (new_point){
         vec2 loc = vector2_scale(new_point->location,zoom);
@@ -237,6 +239,7 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
 }
 
 void append_point(shape_t *shape, int_point point, bool control){
+    if (shape->contour_of && !is_selected(shape)) return;
     vector_point *p = new(vector_point);
     p->location = (vec2){point.x,point.y};
     p->control = control;
@@ -252,6 +255,7 @@ void append_point(shape_t *shape, int_point point, bool control){
 
 void move_point(shape_t *shape, linked_list_node_t *point_node, gpu_point new_pos){
     if (!shape || !shape->shape || !point_node) return;
+    if (shape->contour_of && !is_selected(shape)) return;
     vector_point *p = point_node->data;
     if (!p) return;
     p->location = (vec2){ new_pos.x, new_pos.y };
@@ -261,6 +265,7 @@ void move_point(shape_t *shape, linked_list_node_t *point_node, gpu_point new_po
 
 void delete_point(shape_t *shape, linked_list_node_t *point_node){
     if (!shape || !shape->shape || !point_node) return;
+    if (shape->contour_of && !is_selected(shape)) return;
     linked_list_remove(shape->shape, point_node);
     recalc_shape_size(shape);
     recalc_shape(shape, 0);
@@ -272,7 +277,7 @@ const int border_size = 3;
 const int inner_size = handle_size-(border_size*2);
 
 void render_shape(shape_t *shape){
-    if (!shape->shape || !shape->render.graph.graph || shape->is_contour) return;
+    if (!shape->shape || !shape->render.graph.graph || (shape->contour_of && !is_selected(shape))) return;
     fb_render_path(&ctx, (gpu_point){
        .x = shape->min.x + pan.x,
        .y = shape->min.y + pan.y,
@@ -330,6 +335,7 @@ void prototype_color_pciker(){
 bool find_point_handle(gpu_point p, shape_t **out_shape, linked_list_node_t **out_node){
     all_shapes({
         if (!shape->shape) continue;
+        if (shape->contour_of && !is_selected(shape)) continue;
         vec2 v = ((vec2){p.x,p.y});
         for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
             vector_point *p = head->data;
@@ -442,14 +448,15 @@ void join_contours(){
     shape_t *latest = 0;
     selected_shapes({
         if (latest) {
-            shape->is_contour = true;
+            shape->contour_of = latest;
             latest->link = shape;
-        } else shape->is_contour = false;
+        } else shape->contour_of = 0;
         latest = shape;
     });
     mog(INFO,"Joined %i contours",linked_list_count(selected_list));
     unselect_all();
     recalc_all();
+    uno_refresh();
 }
 
 int main(int argc, char *argv[]){
