@@ -8,6 +8,8 @@
 #include "draw/pathdraw.h"
 #include "debug/profiler.h"
 #include "header_utils/infcanvas.h"
+#include "draw/color.h"
+#include "math/aabb2.h"
 
 enum {
     action_drawing,
@@ -41,10 +43,12 @@ theme_palette palette = {
 };
 
 void recalc_shape_size(shape_t *shape){
+    if (!shape || !shape->shape) return;
     shape->min = (vec2){FLOAT_MAX,FLOAT_MAX};
     shape->max = (vec2){};
     for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
         vector_point *p = head->data;
+        if (!p) continue;
         vec2 loc = vector2_scale(p->location,zoom);
         if (loc.x < shape->min.x){ shape->min.x = loc.x; }
         if (loc.y < shape->min.y){ shape->min.y = loc.y; }
@@ -70,6 +74,7 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
         buffer_wipe(&shape->points_buffer);
         for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
             vector_point *p = head->data;
+            if (!p) continue;
             point_entry entry = {
                 .pos = vector2_sub(vector2_scale(p->location, zoom), shape->min),
                 .on_curve = !p->control,
@@ -86,6 +91,8 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
     shape->slice.close = true;
     shape->slice.start = 0;
     shape->slice.count = count;
+    shape->slice.curve_type = point_graph_curve_quad_only;
+    shape->slice.max_curve_points = 1;
     shape->graph = (point_graph){
         .graph = shape->points_buffer.buffer,
         .num_points = count,
@@ -109,11 +116,28 @@ void append_point(shape_t *shape, int_point point, bool control){
     recalc_shape(shape, p);
 }
 
+void move_point(shape_t *shape, linked_list_node_t *point_node, gpu_point new_pos){
+    if (!shape || !shape->shape || !point_node) return;
+    vector_point *p = point_node->data;
+    if (!p) return;
+    p->location = (vec2){ new_pos.x, new_pos.y };
+    recalc_shape_size(shape);
+    recalc_shape(shape, 0);
+}
+
+void delete_point(shape_t *shape, linked_list_node_t *point_node){
+    if (!shape || !shape->shape || !point_node) return;
+    linked_list_remove(shape->shape, point_node);
+    recalc_shape_size(shape);
+    recalc_shape(shape, 0);
+}
+
+const int handle_size = 30;
+const int border_size = 3;
+const int inner_size = handle_size-(border_size*2);
+
 void render_shape(shape_t *shape){
     if (!shape->shape || !shape->graph.graph) return;
-    const int size = 30;
-    const int border_size = 3;
-    const int inner_size = size-(border_size*2);
     fb_render_path(&ctx, (gpu_point){
        .x = shape->min.x + pan.x,
        .y = shape->min.y + pan.y,
@@ -126,15 +150,47 @@ void render_shape(shape_t *shape){
     });
     for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
         vector_point *p = head->data;
+        if (!p) continue;
         vec2 loc = vector2_scale(p->location,zoom);
-        fb_fill_rect(&ctx, pan.x+ (i32)loc.x-size/2, pan.y + (i32)loc.y-size/2, size, size, (palette.foreground-0x00222222) | 0xFF000000);
-        fb_fill_rect(&ctx, pan.x+ (i32)loc.x-size/2 + border_size, pan.y + (i32)loc.y-size/2 + border_size, inner_size, inner_size, palette.accent);
+        fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2, pan.y + (i32)loc.y-handle_size/2, handle_size, handle_size, (palette.foreground-0x00222222) | 0xFF000000);
+        fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2 + border_size, pan.y + (i32)loc.y-handle_size/2 + border_size, inner_size, inner_size, p->control ? palette.error : palette.accent);
     }
 }
 
 void on_zoom(float z){
     recalc_shape_size(current_shape);
     recalc_shape(current_shape, 0);
+}
+
+void prototype_color_pciker(){
+    float hue = 20;
+    for (int y = 0; y < 255; y++){
+        for (int x = 0; x < 255; x++){
+            fb_draw_pixel(&ctx, x, y, ahsv_to_argb(argb_to_ahsv(ahsv_to_argb((ahsvcolor){
+                .alpha = 1,
+                .hue = hue,
+                .saturation = x/255.f,
+                .value = y/255.f
+            }))).color);
+        }
+    }
+}
+
+bool find_point_handle(gpu_point p, shape_t **out_shape, linked_list_node_t **out_node){
+    shape_t *shape = current_shape;
+    if (!shape || !shape->shape) return false;
+    vec2 v = {p.x,p.y};
+    for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
+        vector_point *p = head->data;
+        if (!p) continue;
+        aabb2 ab = {.min = vector2_sub(p->location, (vector2){handle_size/2.f, handle_size/2.f}), .max = vector2_add(p->location, (vector2){handle_size/2.f, handle_size/2.f})};
+        if (aabb_point_intersect(ab, v)) {
+            if (out_shape) *out_shape = shape;
+            if (out_node) *out_node = head;
+            return true;
+        }
+    }
+    return false;
 }
 
 int main(int argc, char *argv[]){
@@ -150,15 +206,19 @@ int main(int argc, char *argv[]){
     
     on_canvas_zoom = on_zoom;
     
+    shape_t *out_shape = 0;
+    linked_list_node_t *out_node = 0;
+    
     while (!should_close_ctx()){
         
         u64 dtms = profiler_delta();
         
         canvas_background(&ctx, palette.background, palette.foreground);
         
-        if (current_shape){
+        prototype_color_pciker();
+        
+        if (current_shape)
             render_shape(current_shape);
-        }
         
         kbd_event ev = {};
         if (read_event(&ev)){
@@ -174,12 +234,34 @@ int main(int argc, char *argv[]){
         
         canvas_mouse(mouse, 1.f/dtms);
         
+        bool is_mod = is_mod_pressed(KEY_LEFTCTRL, true);
+        
+        gpu_point loc = mouse.position;
+        if (is_mod_pressed(KEY_LEFTALT, true)){
+            loc.x = round_to_int((float)loc.x/grid_size) * grid_size;
+            loc.y = round_to_int((float)loc.y/grid_size) * grid_size;
+        }
+        
         if (mouse_button_down(&mouse, LMB)){
             if (!clicked){
                 clicked = true;
-                append_point(current_shape,mouse.position, false);
+                find_point_handle(loc, &out_shape, &out_node);
+                if (is_mod && out_shape && out_node){
+                    delete_point(out_shape,out_node);
+                    out_shape = 0;
+                    out_node = 0;
+                } else if (!out_shape || !out_node)
+                    append_point(current_shape,loc, is_mod);
             }
-        } else clicked = false;
+        } else {
+            clicked = false;
+            out_shape = 0;
+            out_node = 0;
+        }
+    
+        if (clicked && !is_mod && out_shape && out_node){
+            move_point(out_shape,out_node,loc);
+        }
         
         commit_draw_ctx(&ctx);
     }
