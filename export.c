@@ -1,6 +1,6 @@
 #include "export.h"
 #define MOG_MODULE "VRA_EXPORT"
-#define MOG_LEVEL MOG_WARNING
+#define MOG_LEVEL MOG_VERBOSE
 #include "utils/mog.h"
 #include "files/helpers.h"
 #include "alloc/alloc.h"
@@ -10,7 +10,10 @@ extern u64 point_count;
 
 linked_list_t *export_canvases;
 
-void serialize(){
+bool manual_canvases = false;
+
+void ensure_default_canvas(){
+    if (!manual_canvases) linked_list_clear(export_canvases);
     if (!linked_list_count(export_canvases)){
         aabb2 *canvas = new(aabb2);
         *canvas = (aabb2){
@@ -26,6 +29,10 @@ void serialize(){
         linked_list_push(export_canvases, canvas);
         mog(VERBOSE,"Created new canvas %f,%f - %f,%f",canvas->min.x,canvas->min.y,canvas->max.x,canvas->max.y);
     }
+}
+
+void serialize(){
+    ensure_default_canvas();
     for (linked_list_node_t *node = export_canvases->head; node; node = node->next){
         if (!node->data) continue;
         aabb2 *bounds = node->data;

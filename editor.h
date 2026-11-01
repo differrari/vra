@@ -10,6 +10,13 @@ extern shape_t *current_shape;
 extern color current_shape_color;
 extern color current_shape_outline;
 
+typedef enum {
+    editor_layer_shapes,
+    editor_layer_canvases,
+} editor_layers;
+
+extern editor_layers editor_layer;
+
 shape_t* new_shape();
 
 void join_contours();

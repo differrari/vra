@@ -20,11 +20,6 @@
 #include "export.h"
 #include "editor.h"
 
-enum {
-    action_drawing,
-    action_panning,
-} current_action;
-
 bool snap_on = false, show_handle = true;
 
 draw_ctx ctx = { .width = 1920/2, .height = 1080/2 };
@@ -62,10 +57,10 @@ void render_shape(shape_t *shape){
         vector_point *p = head->data;
         if (!p) continue;
         vec2 loc = vector2_scale(p->location,zoom);
-        if (!hide_handles) fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2, pan.y + (i32)loc.y-handle_size/2, handle_size, handle_size, (palette.foreground-0x00222222) | 0xFF000000);
-        if (!hide_handles) fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2 + border_size, pan.y + (i32)loc.y-handle_size/2 + border_size, inner_size, inner_size, p->control ? palette.error : palette.accent);
+        if (!hide_handles) fb_fill_rect(&ctx, pan.x + (i32)loc.x-handle_size/2, pan.y + (i32)loc.y-handle_size/2, handle_size, handle_size, (palette.foreground-0x00222222) | 0xFF000000);
+        if (!hide_handles) fb_fill_rect(&ctx, pan.x + (i32)loc.x-handle_size/2 + border_size, pan.y + (i32)loc.y-handle_size/2 + border_size, inner_size, inner_size, p->control ? palette.error : palette.accent);
     }
-    if (!hide_handles && is_selected(shape)) fb_fill_rect(&ctx, pan.x+ (i32)shape->render.middle.x-handle_size/2, pan.y + (i32)shape->render.middle.y-handle_size/2, handle_size, handle_size, color_mix(palette.error,palette.accent) | 0xFF000000);
+    if (!hide_handles && is_selected(shape)) fb_fill_rect(&ctx, pan.x + (i32)shape->render.middle.x-handle_size/2, pan.y + (i32)shape->render.middle.y-handle_size/2, handle_size, handle_size, color_mix(palette.error,palette.accent) | 0xFF000000);
 }
 
 void on_zoom(float z){
@@ -104,6 +99,13 @@ bool find_point_handle(gpu_point p, shape_t **out_shape, linked_list_node_t **ou
         }
     })
     return false;
+}
+
+void render_canvas(aabb2 *layer){
+    aabb2 copy = {};
+    copy.min = vector2_scale(layer->min, zoom);
+    copy.max = vector2_scale(layer->max, zoom);
+    fb_fill_rect(&ctx, pan.x + copy.min.x, pan.y + copy.min.y, copy.max.x-copy.min.x, copy.max.y-copy.min.y, 0x77203984);
 }
 
 bool clicked = false;
@@ -184,6 +186,12 @@ int main(int argc, char *argv[]){
         all_shapes({
             render_shape(shape);
         })
+        if (editor_layer == editor_layer_canvases){
+            ensure_default_canvas();
+            all_canvases({
+                render_canvas(canvas);
+            })
+        }
         
         kbd_event ev = {};
         if (read_event(&ev)){
@@ -200,6 +208,7 @@ int main(int argc, char *argv[]){
                     if (ev.key == KEY_J) join_contours();
                     if (ev.key == KEY_I) invert();
                 }
+                editor_layer = ev.key == KEY_L && ev.type != KEY_RELEASE ? editor_layer_canvases : editor_layer_shapes;
                 hide_handles = ev.key == KEY_U && ev.type != KEY_RELEASE || !show_handle;
             }
         }

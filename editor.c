@@ -7,6 +7,8 @@
 #include "uno.h"
 #include "math/vector.h"
 
+editor_layers editor_layer = editor_layer_shapes;
+
 float zoom = 1;
 float max_zoom = 10;
 float min_zoom = 0.1f;
