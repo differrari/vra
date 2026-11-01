@@ -9,7 +9,8 @@
 
 float zoom = 1;
 float max_zoom = 10;
-float min_zoom = 1;
+float min_zoom = 0.1f;
+float zoom_speed = 3;
 gpu_point pan = {};
 int grid_size = 128;
 
