@@ -85,12 +85,12 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
     }
     shape->slice.close = true;
     shape->slice.start = 0;
-    shape->slice.end = count;
+    shape->slice.count = count;
     shape->graph = (point_graph){
         .graph = shape->points_buffer.buffer,
         .num_points = count,
-        .num_slices = 1,
         .slices = &shape->slice,
+        .num_slices = 1,
         .size = vector2_sub(shape->max, shape->min)
     };
     print("Recalc'd shape with new min %f,%f max %f,%f points: %i",shape->min.x,shape->min.y,shape->max.x,shape->max.y,shape->graph.num_points);
@@ -105,7 +105,7 @@ void append_point(shape_t *shape, int_point point, bool control){
         shape->min = (vec2){ FLOAT_MAX, FLOAT_MAX };
         shape->max = (vec2){};
     }
-    linked_list_push_front(shape->shape, p);
+    linked_list_push(shape->shape, p);
     recalc_shape(shape, p);
 }
 
