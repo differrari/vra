@@ -6,16 +6,22 @@
 #include "data/struct/linked_list.h"
 #include "utils/theme.h"
 #include "draw/pathdraw.h"
+#include "debug/profiler.h"
 
 enum {
-    action_panning
+    action_drawing,
+    action_panning,
 } current_action;
 
-int current_grid_level = 100;
+int grid_size = 100;
 
-int scroll_speed = 30;
+float zoom = 1;
+
+float scroll_speed = 0.3f;
 
 draw_ctx ctx = { .width = 1920/2, .height = 1080/2 };
+
+gpu_point pan;
 
 typedef struct {
     vec2 location;
@@ -41,30 +47,45 @@ theme_palette palette = {
     .error = 0xffdd2222
 };
 
+void recalc_shape_size(shape_t *shape){
+    shape->min = (vec2){FLOAT_MAX,FLOAT_MAX};
+    shape->max = (vec2){};
+    for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
+        vector_point *p = head->data;
+        vec2 loc = vector2_scale(p->location,zoom);
+        if (loc.x < shape->min.x){ shape->min.x = loc.x; }
+        if (loc.y < shape->min.y){ shape->min.y = loc.y; }
+        if (loc.x > shape->max.x){ shape->max.x = loc.x; }
+        if (loc.y > shape->max.y){ shape->max.y = loc.y; }
+    }
+}
+
 void recalc_shape(shape_t *shape, vector_point *new_point){
     if (!shape->shape) return;
-    bool recalc_all = false;
-    if (new_point->location.x < shape->min.x){ recalc_all = true; shape->min.x = new_point->location.x; }
-    if (new_point->location.y < shape->min.y){ recalc_all = true; shape->min.y = new_point->location.y; }
-    if (new_point->location.x > shape->max.x){ recalc_all = false; shape->max.x = new_point->location.x; }
-    if (new_point->location.y > shape->max.y){ recalc_all = false; shape->max.y = new_point->location.y; }
+    bool recalc_all = !new_point;
+    if (new_point){
+        vec2 loc = vector2_scale(new_point->location,zoom);
+        if (loc.x < shape->min.x){ recalc_all = true; shape->min.x = loc.x; }
+        if (loc.y < shape->min.y){ recalc_all = true; shape->min.y = loc.y; }
+        if (loc.x > shape->max.x){ recalc_all = false; shape->max.x = loc.x; }
+        if (loc.y > shape->max.y){ recalc_all = false; shape->max.y = loc.y; }
+    }
     size_t count = linked_list_count(shape->shape);
     if (!shape->points_buffer.buffer) shape->points_buffer = buffer_create(sizeof(point_entry) * count, buffer_can_grow);
     
     if (recalc_all){
         buffer_wipe(&shape->points_buffer);
-        int counter = 0;
         for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
             vector_point *p = head->data;
             point_entry entry = {
-                .pos = vector2_sub(p->location, shape->min),
+                .pos = vector2_sub(vector2_scale(p->location, zoom), shape->min),
                 .on_curve = !p->control,
             };
             buffer_write_lim(&shape->points_buffer, (const char*)&entry, sizeof(point_entry));
         }   
     } else {
         point_entry entry = {
-            .pos = vector2_sub(new_point->location, shape->min),
+            .pos = vector2_sub(vector2_scale(new_point->location, zoom), shape->min),
             .on_curve = !new_point->control,
         };
         buffer_write_lim(&shape->points_buffer, (const char*)&entry, sizeof(point_entry));
@@ -97,12 +118,12 @@ void append_point(shape_t *shape, int_point point, bool control){
 
 void render_shape(shape_t *shape){
     if (!shape->shape || !shape->graph.graph) return;
-    int size = current_grid_level/3;
-    if (size < 8) size = 8;
-    int inner_size = size-6;
+    const int size = 30;
+    const int border_size = 3;
+    const int inner_size = size-(border_size*2);
     fb_render_path(&ctx, (gpu_point){
-       .x = shape->min.x,
-       .y = shape->min.y,
+       .x = shape->min.x + pan.x,
+       .y = shape->min.y + pan.y,
     }, shape->graph, (path_render_options){
         .color = shape->fill_color,
         .outline_color = shape->outline_color,
@@ -112,8 +133,9 @@ void render_shape(shape_t *shape){
     });
     for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
         vector_point *p = head->data;
-        fb_fill_rect(&ctx, (i32)p->location.x-size/2, (i32)p->location.y-size/2, size, size, (palette.foreground-0x00222222) | 0xFF000000);
-        fb_fill_rect(&ctx, (i32)p->location.x-size/2 + 3, (i32)p->location.y-size/2 + 3, inner_size, inner_size, palette.accent);
+        vec2 loc = vector2_scale(p->location,zoom);
+        fb_fill_rect(&ctx, pan.x+ (i32)loc.x-size/2, pan.y + (i32)loc.y-size/2, size, size, (palette.foreground-0x00222222) | 0xFF000000);
+        fb_fill_rect(&ctx, pan.x+ (i32)loc.x-size/2 + border_size, pan.y + (i32)loc.y-size/2 + border_size, inner_size, inner_size, palette.accent);
     }
 }
 
@@ -126,14 +148,25 @@ int main(int argc, char *argv[]){
     current_shape->fill_color = 0xff732982;
     current_shape->outline_color = 0xff000000;
     
+    profiler_init();
+    
     while (!should_close_ctx()){
+        
+        u64 dtms = profiler_delta();
+        
         fb_clear(&ctx, palette.background);
         
+        int current_grid_level = grid_size*zoom;
+        
+        gpu_point grid_pan = pan;
+        grid_pan.x %= current_grid_level;
+        grid_pan.y %= current_grid_level;
+        
         for (int x = 0; x < ctx.width; x += current_grid_level){
-            fb_draw_line(&ctx, x, 0, x, ctx.height, palette.foreground);
+            fb_draw_line(&ctx, x+grid_pan.x, grid_pan.y, x+grid_pan.x, ctx.height + grid_pan.y, palette.foreground);
         }
-        for (int y = 0; y < ctx.width; y += current_grid_level){
-            fb_draw_line(&ctx, 0, y, ctx.width, y, palette.foreground);
+        for (int y = 0; y < ctx.height; y += current_grid_level){
+            fb_draw_line(&ctx, grid_pan.x, y+grid_pan.y, ctx.width+grid_pan.x, y+grid_pan.y, palette.foreground);
         }
         
         if (current_shape){
@@ -154,7 +187,7 @@ int main(int argc, char *argv[]){
         
         if (mouse_button_down(&mouse, MMB)){
             current_action = action_panning;
-        }
+        } else current_action = action_drawing;
         
         if (mouse_button_down(&mouse, LMB)){
             if (!clicked){
@@ -164,8 +197,15 @@ int main(int argc, char *argv[]){
         } else clicked = false;
         
         if (mouse.raw.scroll){
-            current_grid_level += mouse.raw.scroll * scroll_speed;
-            current_grid_level = clamp(current_grid_level, 10, ctx.width/3);
+            zoom += mouse.raw.scroll * 1.f/dtms;
+            zoom = clampf(zoom, 1.f, 10.f);
+            recalc_shape_size(current_shape);
+            recalc_shape(current_shape, 0);
+        }
+        
+        if (current_action == action_panning){
+            pan.x += mouse.raw.x;
+            pan.y += mouse.raw.y;
         }
         
         commit_draw_ctx(&ctx);
