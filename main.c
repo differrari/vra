@@ -10,11 +10,27 @@
 #include "header_utils/infcanvas.h"
 #include "draw/color.h"
 #include "math/aabb2.h"
+#include "uno.h"
+#include "files/helpers.h"
+
+#define MAGIC_NUM 0xEC70
+
+typedef struct {
+    u16 magic;
+    u8 rsvd[6];
+    u64 hdr_version;
+    u64 num_shapes;
+}__attribute__((packed)) vro_header;
 
 enum {
     action_drawing,
     action_panning,
 } current_action;
+
+enum {
+    ui_tag_invalid,
+    ui_tag_newshape
+} ui_tags;
 
 draw_ctx ctx = { .width = 1920/2, .height = 1080/2 };
 
@@ -24,16 +40,18 @@ typedef struct {
 } vector_point;
 
 typedef struct {
-    vec2 min, max;
     color outline_color;
     color fill_color;
-    point_graph_slice slice;
-    linked_list_t *shape;
     point_graph graph;
+} shape_render_info;
+
+typedef struct {
+    vec2 min, max;
+    point_graph_slice slice;
+    shape_render_info render;
+    linked_list_t *shape;
     buffer points_buffer;
 } shape_t;
-
-shape_t *current_shape;
 
 theme_palette palette = {
     .background = 0xff888888,
@@ -41,6 +59,48 @@ theme_palette palette = {
     .accent = 0xffb4dd13,
     .error = 0xffdd2222
 };
+
+u64 point_count;
+
+linked_list_t *shape_list;
+#define all_shapes(action) for (linked_list_node_t *head = shape_list->head; head; head = head->next) { shape_t *shape = head->data; if (!shape) continue; action }
+
+buffer serialize(){
+    size_t shape_count = linked_list_count(shape_list);
+    buffer buf = buffer_create(sizeof(vro_header) + (sizeof(shape_t)*shape_count) + (point_count*sizeof(point_entry)), buffer_can_grow);
+    
+    vro_header hdr = {
+        .hdr_version = VERSION_NUM(0, 1, 0, 0),
+        .magic = MAGIC_NUM,
+        .num_shapes = shape_count
+    };
+    buffer_write_lim(&buf, (char*)&hdr, sizeof(vro_header));
+    
+    all_shapes({
+        shape_render_info info = shape->render;
+        info.graph.graph = (void*)(buf.cursor + sizeof(shape_render_info) + (info.graph.num_slices * sizeof(point_graph_slice)));
+        info.graph.slices = (void*)(buf.cursor + sizeof(shape_render_info));
+        print("Graph at %x slices at %x",info.graph.graph,info.graph.slices);
+        buffer_write_lim(&buf, (char*)&info, sizeof(shape_render_info));
+        for (u64 i = 0; i < shape->render.graph.num_slices; i++){
+            buffer_write_lim(&buf, (char*)&shape->render.graph.slices[i], sizeof(point_graph_slice));
+        }
+        for (u64 i = 0; i < shape->render.graph.num_points; i++){
+            buffer_write_lim(&buf, (char*)&shape->render.graph.graph[i], sizeof(point_entry));
+        }
+    });
+    
+    write_full_file("/home/di/playground/hey.vro", buf.buffer, buf.buffer_size);
+    print("Wrote %i vros",shape_count);
+    
+    return buf;
+    
+}
+
+shape_t *current_shape;
+
+color current_shape_color = 0xff732982;
+color current_shape_outline = 0xff000000;
 
 void recalc_shape_size(shape_t *shape){
     if (!shape || !shape->shape) return;
@@ -93,14 +153,14 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
     shape->slice.count = count;
     shape->slice.curve_type = point_graph_curve_quad_only;
     shape->slice.max_curve_points = 1;
-    shape->graph = (point_graph){
+    shape->render.graph = (point_graph){
         .graph = shape->points_buffer.buffer,
         .num_points = count,
         .slices = &shape->slice,
         .num_slices = 1,
         .size = vector2_sub(shape->max, shape->min)
     };
-    print("Recalc'd shape with new min %f,%f max %f,%f points: %i",shape->min.x,shape->min.y,shape->max.x,shape->max.y,shape->graph.num_points);
+    print("Recalc'd shape with new min %f,%f max %f,%f points: %i",shape->min.x,shape->min.y,shape->max.x,shape->max.y,shape->render.graph.num_points);
 }
 
 void append_point(shape_t *shape, int_point point, bool control){
@@ -114,6 +174,7 @@ void append_point(shape_t *shape, int_point point, bool control){
     }
     linked_list_push(shape->shape, p);
     recalc_shape(shape, p);
+    point_count++;
 }
 
 void move_point(shape_t *shape, linked_list_node_t *point_node, gpu_point new_pos){
@@ -130,6 +191,7 @@ void delete_point(shape_t *shape, linked_list_node_t *point_node){
     linked_list_remove(shape->shape, point_node);
     recalc_shape_size(shape);
     recalc_shape(shape, 0);
+    point_count--;
 }
 
 const int handle_size = 30;
@@ -137,13 +199,13 @@ const int border_size = 3;
 const int inner_size = handle_size-(border_size*2);
 
 void render_shape(shape_t *shape){
-    if (!shape->shape || !shape->graph.graph) return;
+    if (!shape->shape || !shape->render.graph.graph) return;
     fb_render_path(&ctx, (gpu_point){
        .x = shape->min.x + pan.x,
        .y = shape->min.y + pan.y,
-    }, shape->graph, (path_render_options){
-        .color = shape->fill_color,
-        .outline_color = shape->outline_color,
+    }, shape->render.graph, (path_render_options){
+        .color = shape->render.fill_color,
+        .outline_color = shape->render.outline_color,
         .scale = 1,
         .sizing_policy = path_render_sizing_none,
         .type = path_render_outline | path_render_fill
@@ -158,8 +220,20 @@ void render_shape(shape_t *shape){
 }
 
 void on_zoom(float z){
-    recalc_shape_size(current_shape);
-    recalc_shape(current_shape, 0);
+    if (!shape_list) return;
+    all_shapes({
+        recalc_shape_size(shape);
+        recalc_shape(shape, 0);
+    })
+}
+
+shape_t* new_shape(){
+    shape_t *shape = new(shape_t);
+    shape->render.fill_color = current_shape_color;
+    shape->render.outline_color = current_shape_outline;
+    linked_list_push(shape_list, shape);
+    uno_refresh();
+    return shape;
 }
 
 void prototype_color_pciker(){
@@ -177,37 +251,111 @@ void prototype_color_pciker(){
 }
 
 bool find_point_handle(gpu_point p, shape_t **out_shape, linked_list_node_t **out_node){
-    shape_t *shape = current_shape;
-    if (!shape || !shape->shape) return false;
-    vec2 v = {p.x,p.y};
-    for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
-        vector_point *p = head->data;
-        if (!p) continue;
-        aabb2 ab = {.min = vector2_sub(p->location, (vector2){handle_size/2.f, handle_size/2.f}), .max = vector2_add(p->location, (vector2){handle_size/2.f, handle_size/2.f})};
-        if (aabb_point_intersect(ab, v)) {
-            if (out_shape) *out_shape = shape;
-            if (out_node) *out_node = head;
-            return true;
+    all_shapes({
+        if (!shape->shape) continue;
+        vec2 v = ((vec2){p.x,p.y});
+        for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
+            vector_point *p = head->data;
+            if (!p) continue;
+            aabb2 ab = ((aabb2){.min = vector2_sub(p->location, (vector2){handle_size/2.f, handle_size/2.f}), .max = vector2_add(p->location, (vector2){handle_size/2.f, handle_size/2.f})});
+            if (aabb_point_intersect(ab, v)) {
+                if (out_shape) *out_shape = shape;
+                if (out_node) *out_node = head;
+                return true;
+            }
         }
-    }
+    })
     return false;
+}
+
+void new_shape_pressed(int tag, gpu_point point){
+    print("Am i not clicking");
+    current_shape = new_shape();
+}
+
+button_info new_shape_bi = {
+    .press = new_shape_pressed
+};
+
+buffer temp_ui_strings;
+
+void ui_builder(){
+    if (!temp_ui_strings.buffer) temp_ui_strings = buffer_create(0x1000, buffer_can_grow);
+    else buffer_wipe(&temp_ui_strings);
+    HORIZONTAL((node_info){ .sizing_rule = size_fill}, {
+        SPACER
+        VERTICAL(((node_info){ .sizing_rule = size_relative, .percentage = 0.2f, .bg_color = 0xbb4382 }), {
+            int count = 0;
+            all_shapes({
+                uptr start = temp_ui_strings.cursor;
+                buffer_write(&temp_ui_strings, "Shape %i", count++);//NOTE: if the buffer is resized, all the previous strings might get lost
+                uno_label((node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, doc_text_heading, (string_slice){.data = temp_ui_strings.buffer + start, temp_ui_strings.cursor-start});
+            });
+            SPACER
+            uno_button(ui_tag_newshape, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &new_shape_bi, SLICE("New shape"));
+        });
+    });
+}
+
+bool clicked = false;
+shape_t *out_shape = 0;
+linked_list_node_t *out_node = 0;
+
+void mouse_handle(mouse_data mouse, u64 dtms){
+    
+    canvas_mouse(mouse, 1.f/dtms);
+    
+    bool is_mod = is_mod_pressed(KEY_LEFTCTRL, true);
+    
+    gpu_point loc = mouse.position;
+    if (is_mod_pressed(KEY_LEFTALT, true)){
+        loc.x = round_to_int((float)loc.x/grid_size) * grid_size;
+        loc.y = round_to_int((float)loc.y/grid_size) * grid_size;
+    }
+    
+    if (mouse_button_down(&mouse, LMB)){
+        if (!clicked){
+            clicked = true;
+            find_point_handle(loc, &out_shape, &out_node);
+            if (is_mod && out_shape && out_node){
+                delete_point(out_shape,out_node);
+                out_shape = 0;
+                out_node = 0;
+            } else if (!out_shape || !out_node){
+                if (!current_shape){
+                    if (shape_list->tail)
+                        current_shape = shape_list->tail->data;
+                    if (!current_shape){
+                        current_shape = new_shape();
+                    }
+                }
+                append_point(current_shape,loc, is_mod);
+            }
+        }
+    } else {
+        clicked = false;
+        out_shape = 0;
+        out_node = 0;
+    }
+
+    if (clicked && !is_mod && out_shape && out_node)
+        move_point(out_shape,out_node,loc);
 }
 
 int main(int argc, char *argv[]){
     request_app_ctx(&ctx);
     
-    bool clicked = false;
-    
-    current_shape = new(shape_t);
-    current_shape->fill_color = 0xff732982;
-    current_shape->outline_color = 0xff000000;
+    shape_list = linked_list_create();
     
     profiler_init();
     
     on_canvas_zoom = on_zoom;
     
-    shape_t *out_shape = 0;
-    linked_list_node_t *out_node = 0;
+    uno_set_document_view(ui_builder, draw_ctx_rect(&ctx));
+    
+    uno_clear_color(0);
+    
+    uno_redraw_always();
     
     while (!should_close_ctx()){
         
@@ -215,53 +363,31 @@ int main(int argc, char *argv[]){
         
         canvas_background(&ctx, palette.background, palette.foreground);
         
-        prototype_color_pciker();
+        // prototype_color_pciker();
         
-        if (current_shape)
-            render_shape(current_shape);
+        all_shapes({
+            render_shape(shape);
+        })
         
         kbd_event ev = {};
         if (read_event(&ev)){
             if (!handle_modifier(&ev)){
                 if (ev.type == KEY_PRESS){
                     if (is_mod_pressed(KEY_LEFTALT, true) && ev.key == KEY_ESC) halt(0);
+                    if (ev.key == KEY_TAB) current_shape = new_shape();
+                    if (ev.key == KEY_ENTER) serialize();
                 }
             }
         }
         
         mouse_data mouse = {};
         get_mouse_status(&mouse);
+        // if (!uno_dispatch_mouse(mouse, current_modifier)){
+            // print("Falling through");
+            mouse_handle(mouse, dtms);
+        // }
         
-        canvas_mouse(mouse, 1.f/dtms);
-        
-        bool is_mod = is_mod_pressed(KEY_LEFTCTRL, true);
-        
-        gpu_point loc = mouse.position;
-        if (is_mod_pressed(KEY_LEFTALT, true)){
-            loc.x = round_to_int((float)loc.x/grid_size) * grid_size;
-            loc.y = round_to_int((float)loc.y/grid_size) * grid_size;
-        }
-        
-        if (mouse_button_down(&mouse, LMB)){
-            if (!clicked){
-                clicked = true;
-                find_point_handle(loc, &out_shape, &out_node);
-                if (is_mod && out_shape && out_node){
-                    delete_point(out_shape,out_node);
-                    out_shape = 0;
-                    out_node = 0;
-                } else if (!out_shape || !out_node)
-                    append_point(current_shape,loc, is_mod);
-            }
-        } else {
-            clicked = false;
-            out_shape = 0;
-            out_node = 0;
-        }
-    
-        if (clicked && !is_mod && out_shape && out_node){
-            move_point(out_shape,out_node,loc);
-        }
+        // uno_draw(&ctx);
         
         commit_draw_ctx(&ctx);
     }
