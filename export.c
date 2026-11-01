@@ -5,6 +5,7 @@
 #include "files/helpers.h"
 #include "alloc/alloc.h"
 #include "math/aabb2.h"
+#include "editor.h"
 
 extern u64 point_count;
 
@@ -29,6 +30,22 @@ void ensure_default_canvas(){
         linked_list_push(export_canvases, canvas);
         mog(VERBOSE,"Created new canvas %f,%f - %f,%f",canvas->min.x,canvas->min.y,canvas->max.x,canvas->max.y);
     }
+}
+
+void enable_manual_canvas(){
+    if (!manual_canvases){
+        manual_canvases = true;
+        linked_list_clear(export_canvases);
+    }
+}
+
+void register_new_canvas(gpu_point start, gpu_point end){
+    aabb2 *new_canvas = new(aabb2);
+    *new_canvas = (aabb2){
+        .min = { start.x*zoom, start.y*zoom },
+        .max = { end.x*zoom, end.y*zoom },
+    };
+    linked_list_push(export_canvases, new_canvas);
 }
 
 void serialize(){

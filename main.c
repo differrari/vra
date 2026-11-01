@@ -112,6 +112,41 @@ bool clicked = false;
 shape_t *out_shape = 0;
 linked_list_node_t *out_node = 0;
 
+void shapes_click(bool clicked, gpu_point loc, gpu_point non_snap, bool is_mod){
+    if (!clicked) return;
+    find_point_handle(non_snap, &out_shape, &out_node);
+    if (is_mod && out_shape && out_node){
+        delete_point(out_shape,out_node);
+        out_shape = 0;
+        out_node = 0;
+    } else if (!out_shape || !out_node){
+        if (!current_shape){
+            if (shape_list->tail)
+                current_shape = shape_list->tail->data;
+            if (!current_shape){
+                new_shape();
+            }
+        }
+        append_point(current_shape,loc, is_mod);
+    }
+}
+
+bool started_canvas = false;
+gpu_point canvas_start = {};
+
+void canvas_click(bool clicked, gpu_point loc, gpu_point non_snap, bool is_mod){
+    if (clicked){ 
+        if (!started_canvas) canvas_start = loc;
+        started_canvas = true;
+    }
+    else if (started_canvas){
+        started_canvas = false;
+        enable_manual_canvas();
+        register_new_canvas(canvas_start, loc);
+        canvas_start = (gpu_point){};
+    }
+}
+
 void mouse_handle(mouse_data mouse, u64 dtms){
     
     canvas_mouse(mouse, 1.f/dtms);
@@ -132,26 +167,16 @@ void mouse_handle(mouse_data mouse, u64 dtms){
     if (mouse_button_down(&mouse, LMB)){
         if (!clicked){
             clicked = true;
-            find_point_handle(non_snap, &out_shape, &out_node);
-            if (is_mod && out_shape && out_node){
-                delete_point(out_shape,out_node);
-                out_shape = 0;
-                out_node = 0;
-            } else if (!out_shape || !out_node){
-                if (!current_shape){
-                    if (shape_list->tail)
-                        current_shape = shape_list->tail->data;
-                    if (!current_shape){
-                        new_shape();
-                    }
-                }
-                append_point(current_shape,loc, is_mod);
-            }
         }
     } else {
         clicked = false;
         out_shape = 0;
         out_node = 0;
+    }
+    
+    switch (editor_layer) {
+        case editor_layer_shapes: shapes_click(clicked, loc, non_snap, is_mod); break;
+        case editor_layer_canvases: canvas_click(clicked, loc, non_snap, is_mod); break;
     }
 
     if (clicked && !is_mod && out_shape && out_node)
@@ -208,7 +233,10 @@ int main(int argc, char *argv[]){
                     if (ev.key == KEY_J) join_contours();
                     if (ev.key == KEY_I) invert();
                 }
-                editor_layer = ev.key == KEY_L && ev.type != KEY_RELEASE ? editor_layer_canvases : editor_layer_shapes;
+                bool new_el = ev.key == KEY_L && ev.type != KEY_RELEASE ? editor_layer_canvases : editor_layer_shapes;
+                bool need_refresh = new_el != editor_layer;
+                editor_layer = new_el;
+                if (need_refresh) uno_refresh();
                 hide_handles = ev.key == KEY_U && ev.type != KEY_RELEASE || !show_handle;
             }
         }

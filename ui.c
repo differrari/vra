@@ -58,6 +58,29 @@ button_info core_actions_bi = {
 
 void *ui_strings_page;
 
+void ui_shapes(){
+    int count = 0;
+    
+    all_shapes({
+        char *s = allocate(ui_strings_page,256,page_alloc);
+        buffer b = ((buffer){.buffer = s, .buffer_size = 0, .limit = 256});
+        buffer_write_const(&b,"[");
+        if (is_selected(shape)) buffer_write_const(&b, "S");
+        if (shape->contour_of) buffer_write_const(&b, "c");
+        else if (shape->link) buffer_write_const(&b, "C");
+        buffer_write_const(&b, shape->counter_clockwise ? "<" : ">");
+        buffer_write(&b,"] Shape %i",count);
+        uno_button(ui_tag_shape + count, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &select_shape_bi, (string_slice){s,b.buffer_size});
+        count++;
+    });
+}
+
+void ui_canvases(){
+    if (!manual_canvases){
+        uno_label((node_info){}, doc_text_body, SLICE("Automatic canvas"));
+    }
+}
+
 void ui_builder(){
     if (ui_strings_page) release_page_all(ui_strings_page);
     ui_strings_page = page_alloc(PAGE_SIZE);
@@ -77,19 +100,10 @@ void ui_builder(){
         });
         SPACER
         VERTICAL(((node_info){ .sizing_rule = size_relative, .percentage = 0.2f, .bg_color = 0xff767676 }), {
-            int count = 0;
-            all_shapes({
-                char *s = allocate(ui_strings_page,256,page_alloc);
-                buffer b = ((buffer){.buffer = s, .buffer_size = 0, .limit = 256});
-                buffer_write_const(&b,"[");
-                if (is_selected(shape)) buffer_write_const(&b, "S");
-                if (shape->contour_of) buffer_write_const(&b, "c");
-                else if (shape->link) buffer_write_const(&b, "C");
-                buffer_write_const(&b, shape->counter_clockwise ? "<" : ">");
-                buffer_write(&b,"] Shape %i",count);
-                uno_button(ui_tag_shape + count, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &select_shape_bi, (string_slice){s,b.buffer_size});
-                count++;
-            });
+            switch (editor_layer){
+                case editor_layer_shapes: ui_shapes(); break;
+                case editor_layer_canvases: ui_canvases(); break;
+            }
             SPACER
             uno_button(ui_tag_newshape, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &core_actions_bi, SLICE("New shape"));
         });
