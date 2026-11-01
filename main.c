@@ -69,6 +69,8 @@ theme_palette palette = {
 
 u64 point_count;
 
+bool hide_handles = false;
+
 linked_list_t *shape_list;
 #define all_shapes(action) for (linked_list_node_t *head = shape_list->head; head; head = head->next) { shape_t *shape = head->data; if (!shape) continue; action }
 linked_list_t *selected_list;
@@ -255,7 +257,7 @@ void append_point(shape_t *shape, int_point point, bool control){
 
 void move_point(shape_t *shape, linked_list_node_t *point_node, gpu_point new_pos){
     if (!shape || !shape->shape || !point_node) return;
-    if (shape->contour_of && !is_selected(shape)) return;
+    if (current_shape != shape && !is_selected(shape)) return;
     vector_point *p = point_node->data;
     if (!p) return;
     p->location = (vec2){ new_pos.x, new_pos.y };
@@ -265,7 +267,7 @@ void move_point(shape_t *shape, linked_list_node_t *point_node, gpu_point new_po
 
 void delete_point(shape_t *shape, linked_list_node_t *point_node){
     if (!shape || !shape->shape || !point_node) return;
-    if (shape->contour_of && !is_selected(shape)) return;
+    if (current_shape != shape && !is_selected(shape)) return;
     linked_list_remove(shape->shape, point_node);
     recalc_shape_size(shape);
     recalc_shape(shape, 0);
@@ -292,8 +294,8 @@ void render_shape(shape_t *shape){
         vector_point *p = head->data;
         if (!p) continue;
         vec2 loc = vector2_scale(p->location,zoom);
-        fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2, pan.y + (i32)loc.y-handle_size/2, handle_size, handle_size, (palette.foreground-0x00222222) | 0xFF000000);
-        fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2 + border_size, pan.y + (i32)loc.y-handle_size/2 + border_size, inner_size, inner_size, p->control ? palette.error : palette.accent);
+        if (!hide_handles) fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2, pan.y + (i32)loc.y-handle_size/2, handle_size, handle_size, (palette.foreground-0x00222222) | 0xFF000000);
+        if (!hide_handles) fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2 + border_size, pan.y + (i32)loc.y-handle_size/2 + border_size, inner_size, inner_size, p->control ? palette.error : palette.accent);
     }
 }
 
@@ -389,8 +391,13 @@ void ui_builder(){
             int count = 0;
             all_shapes({
                 char *s = allocate(ui_strings_page,256,page_alloc);
-                size_t n = string_format_buf(s, 256, "%sShape %i", is_selected(shape) ? "[S]" : "", count);
-                uno_button(ui_tag_shape + count, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &select_shape_bi, (string_slice){s,n});
+                buffer b = ((buffer){.buffer = s, .buffer_size = 0, .limit = 256});
+                buffer_write_const(&b,"[");
+                if (is_selected(shape)) buffer_write_const(&b, "S");
+                if (shape->contour_of) buffer_write_const(&b, "c");
+                else if (shape->link) buffer_write_const(&b, "C");
+                buffer_write(&b,"] Shape %i",count);
+                uno_button(ui_tag_shape + count, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &select_shape_bi, (string_slice){s,b.buffer_size});
                 count++;
             });
             SPACER
@@ -410,6 +417,8 @@ void mouse_handle(mouse_data mouse, u64 dtms){
     bool is_mod = is_mod_pressed(KEY_LEFTCTRL, true);
     
     gpu_point loc = mouse.position;
+    loc.x -= pan.x;
+    loc.y -= pan.y;
     if (is_mod_pressed(KEY_LEFTALT, true)){
         loc.x = round_to_int((float)loc.x/grid_size) * grid_size;
         loc.y = round_to_int((float)loc.y/grid_size) * grid_size;
@@ -450,7 +459,10 @@ void join_contours(){
         if (latest) {
             shape->contour_of = latest;
             latest->link = shape;
-        } else shape->contour_of = 0;
+        } else {
+            current_shape = shape;
+            shape->contour_of = 0;
+        }
         latest = shape;
     });
     mog(INFO,"Joined %i contours",linked_list_count(selected_list));
@@ -496,6 +508,7 @@ int main(int argc, char *argv[]){
                     if (ev.key == KEY_ENTER) serialize();
                     if (ev.key == KEY_J) join_contours();
                 }
+                hide_handles = ev.key == KEY_U && ev.type != KEY_RELEASE;
             }
         }
         
