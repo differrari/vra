@@ -65,6 +65,7 @@ void render_shape(shape_t *shape){
         if (!hide_handles) fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2, pan.y + (i32)loc.y-handle_size/2, handle_size, handle_size, (palette.foreground-0x00222222) | 0xFF000000);
         if (!hide_handles) fb_fill_rect(&ctx, pan.x+ (i32)loc.x-handle_size/2 + border_size, pan.y + (i32)loc.y-handle_size/2 + border_size, inner_size, inner_size, p->control ? palette.error : palette.accent);
     }
+    if (!hide_handles && is_selected(shape)) fb_fill_rect(&ctx, pan.x+ (i32)shape->render.middle.x-handle_size/2, pan.y + (i32)shape->render.middle.y-handle_size/2, handle_size, handle_size, color_mix(palette.error,palette.accent) | 0xFF000000);
 }
 
 void on_zoom(float z){
@@ -188,9 +189,15 @@ int main(int argc, char *argv[]){
             if (!handle_modifier(&ev)){
                 if (ev.type == KEY_PRESS){
                     if (is_mod_pressed(KEY_LEFTALT, true) && ev.key == KEY_ESC) halt(0);
-                    if (ev.key == KEY_TAB) new_shape();
+                    if (ev.key == KEY_N){
+                        if (is_mod_pressed(KEY_LEFTALT, true))
+                            new_contour();
+                        else 
+                            new_shape();
+                    } 
                     if (ev.key == KEY_ENTER) serialize();
                     if (ev.key == KEY_J) join_contours();
+                    if (ev.key == KEY_I) invert();
                 }
                 hide_handles = ev.key == KEY_U && ev.type != KEY_RELEASE || !show_handle;
             }

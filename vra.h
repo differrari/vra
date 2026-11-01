@@ -9,6 +9,7 @@ typedef struct {
     color outline_color;
     color fill_color;
     point_graph graph;
+    vec2 middle;
 } shape_render_info;
 
 typedef struct shape_t{
@@ -18,6 +19,7 @@ typedef struct shape_t{
     buffer points_buffer;
     buffer slice_buffer;
     int current_slice;
+    bool counter_clockwise;
     struct shape_t *contour_of;
     struct shape_t *link;
 } shape_t;

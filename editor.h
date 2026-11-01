@@ -19,7 +19,9 @@ void move_point(shape_t *shape, linked_list_node_t *point_node, gpu_point new_po
 void delete_point(shape_t *shape, linked_list_node_t *point_node);
 void recalc_all();
 shape_t* new_shape();
+shape_t *new_contour();
 void join_contours();
+void invert();
 void recalc_shape_size(shape_t *shape);
 void recalc_slice(shape_t *shape,int start, int count);
 void recalc_shape(shape_t *shape, vector_point *new_point);

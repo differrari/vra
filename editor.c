@@ -24,6 +24,37 @@ u64 point_count = 0;
 color current_shape_color = 0xff732982;
 color current_shape_outline = 0xff000000;
 
+bool points_clockwise(vector_point *a, vector_point *b, shape_t *s){
+    vec2 center = s->render.middle;
+    if (a->location.x - center.x >= 0 && b->location.x - center.x < 0)
+        return true;
+    if (a->location.x - center.x < 0 && b->location.x - center.x >= 0)
+        return false;
+    if (a->location.x - center.x == 0 && b->location.x - center.x == 0) {
+        if (a->location.y - center.y >= 0 || b->location.y - center.y >= 0)
+            return a->location.y > b->location.y;
+        return b->location.y > a->location.y;
+    }
+
+    int det = (a->location.x - center.x) * (b->location.y - center.y) - (b->location.x - center.x) * (a->location.y - center.y);
+    if (det < 0)
+        return true;
+    if (det > 0)
+        return false;
+
+    int d1 = (a->location.x - center.x) * (a->location.x - center.x) + (a->location.y - center.y) * (a->location.y - center.y);
+    int d2 = (b->location.x - center.x) * (b->location.x - center.x) + (b->location.y - center.y) * (b->location.y - center.y);
+    return d1 > d2;
+}
+
+bool shape_sort(void *a, void *b, void *ctx){
+    if (!ctx || !a || !b) return false;
+    shape_t *s = ctx;
+    vector_point *ap = a;
+    vector_point *bp = b;
+    return s->counter_clockwise ^ points_clockwise(ap, bp, s);
+}
+
 void append_point(shape_t *shape, int_point point, bool control){
     if (shape->contour_of && !is_selected(shape)) return;
     vector_point *p = new(vector_point);
@@ -34,8 +65,13 @@ void append_point(shape_t *shape, int_point point, bool control){
         shape->min = (vec2){ FLOAT_MAX, FLOAT_MAX };
         shape->max = (vec2){};
     }
+    bool need_reorder = !shape_sort(shape->shape->tail, p, shape);
     linked_list_push(shape->shape, p);
-    recalc_shape(shape, p);
+    // if (need_reorder){
+        linked_list_sort(shape->shape, shape, shape_sort);
+        recalc_shape_size(shape);
+        recalc_shape(shape, 0);
+    // } else recalc_shape(shape, p);
     point_count++;
 }
 void move_point(shape_t *shape, linked_list_node_t *point_node, gpu_point new_pos){
@@ -68,10 +104,34 @@ shape_t* new_shape(){
     shape->render.fill_color = current_shape_color;
     shape->render.outline_color = current_shape_outline;
     linked_list_push(shape_list, shape);
-    uno_refresh();
     current_shape = shape;
     linked_list_clear(selected_list);
     linked_list_push(selected_list, shape);
+    uno_refresh();
+    return shape;
+}
+
+shape_t *new_contour(){
+    if (!current_shape) return 0;
+    shape_t *shape = new(shape_t);
+    shape->render.fill_color = current_shape_color;
+    shape->render.outline_color = current_shape_outline;
+    linked_list_push(shape_list, shape);
+    shape_t *parent = current_shape;
+    while (parent->contour_of) parent = parent->contour_of;
+    shape_t *last = parent;
+    while (last->link) last = last->link;
+    shape->contour_of = last;
+    last->link = shape;
+    shape->counter_clockwise = !last->counter_clockwise;
+    current_shape = shape;
+    linked_list_clear(selected_list);
+    linked_list_push(selected_list, parent);
+    while (parent->link){
+        linked_list_push(selected_list, parent->link);
+        parent = parent->link;
+    }
+    uno_refresh();
     return shape;
 }
 
@@ -89,6 +149,15 @@ void join_contours(){
     });
     mog(INFO,"Joined %i contours",linked_list_count(selected_list));
     unselect_all();
+    recalc_all();
+    uno_refresh();
+}
+
+void invert(){
+    selected_shapes({
+        shape->counter_clockwise = !shape->counter_clockwise;
+        linked_list_sort(shape->shape, shape, shape_sort);
+    });
     recalc_all();
     uno_refresh();
 }
@@ -158,16 +227,19 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
         buffer_wipe(&shape->points_buffer);
         cur_shape = shape;
         shape->current_slice = 0;
+        shape->render.middle = (vec2){};
         int total = 0;
         while (cur_shape){
             int c = 0;
             for (linked_list_node_t *head = cur_shape->shape->head; head; head = head->next){
                 vector_point *p = head->data;
                 if (!p) continue;
+                vec2 np = vector2_scale(p->location, zoom);
                 point_entry entry = {
-                    .pos = vector2_sub(vector2_scale(p->location, zoom), shape->min),
+                    .pos = vector2_sub(np, shape->min),
                     .on_curve = !p->control,
                 };
+                shape->render.middle = vector2_add(np, shape->render.middle);
                 buffer_write_lim(&shape->points_buffer, (const char*)&entry, sizeof(point_entry));
                 c++;
             }
@@ -179,11 +251,16 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
         if (total != count){
             mog(WARNING,"Mismatch in size, expected %i, found %i",count,total);
         }
+        shape->render.middle = vector2_scale(shape->render.middle, 1.f/total);
     } else {
+        vec2 np = vector2_scale(new_point->location, zoom);
         point_entry entry = {
-            .pos = vector2_sub(vector2_scale(new_point->location, zoom), shape->min),
+            .pos = vector2_sub(np, shape->min),
             .on_curve = !new_point->control,
         };
+        shape->render.middle = vector2_scale(shape->render.middle, count-1);
+        shape->render.middle = vector2_add(shape->render.middle, np);
+        shape->render.middle = vector2_scale(shape->render.middle, 1.f/count);
         buffer_write_lim(&shape->points_buffer, (const char*)&entry, sizeof(point_entry));
         recalc_slice(shape, shape->render.graph.slices[shape->current_slice].start, shape->render.graph.slices[shape->current_slice].count+1);
     }
