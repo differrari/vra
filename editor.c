@@ -11,12 +11,10 @@ float zoom = 1;
 float max_zoom = 10;
 float min_zoom = 1;
 gpu_point pan = {};
-int grid_size = 100;
+int grid_size = 128;
 
-int max_grid = 500;
-int min_grid = 10;
-
-int grid_snap = 50;
+int max_grid = 1024;
+int min_grid = 1;
 
 void (*on_canvas_pan)(gpu_point point);
 void (*on_canvas_zoom)(float zoom);
