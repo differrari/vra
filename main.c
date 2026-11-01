@@ -161,6 +161,7 @@ int main(int argc, char *argv[]){
     
     shape_list = linked_list_create();
     selected_list = linked_list_create();
+    export_canvases = linked_list_create();
     
     profiler_init();
     

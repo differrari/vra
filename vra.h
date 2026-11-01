@@ -30,4 +30,4 @@ typedef struct {
 } vector_point;
 
 extern linked_list_t *shape_list;
-#define all_shapes(action) for (linked_list_node_t *head = shape_list->head; head; head = head->next) { shape_t *shape = head->data; if (!shape) continue; action }
+#define all_shapes(action) for (linked_list_node_t *all_shapes_head = shape_list->head; all_shapes_head; all_shapes_head = all_shapes_head->next) { shape_t *shape = all_shapes_head->data; if (!shape) continue; action }
