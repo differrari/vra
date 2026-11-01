@@ -47,10 +47,11 @@ typedef struct {
 
 typedef struct {
     vec2 min, max;
-    point_graph_slice slice;
     shape_render_info render;
     linked_list_t *shape;
     buffer points_buffer;
+    buffer slice_buffer;
+    int current_slice;
 } shape_t;
 
 theme_palette palette = {
@@ -148,16 +149,25 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
         };
         buffer_write_lim(&shape->points_buffer, (const char*)&entry, sizeof(point_entry));
     }
-    shape->slice.close = true;
-    shape->slice.start = 0;
-    shape->slice.count = count;
-    shape->slice.curve_type = point_graph_curve_quad_only;
-    shape->slice.max_curve_points = 1;
+    if (!shape->render.graph.num_slices){
+        shape->slice_buffer = buffer_create(sizeof(point_graph_slice), buffer_can_grow);
+        buffer_write_lim(&shape->slice_buffer, (char*)&(point_graph_slice){
+           .close = true,
+           .start = 0,
+           .count = count,
+           .curve_type = point_graph_curve_quad_only,
+           .max_curve_points = 1,
+       }, sizeof(point_graph_slice));
+        shape->current_slice = 0;
+        shape->render.graph.num_slices++;
+    } else {
+        ((point_graph_slice*)shape->slice_buffer.buffer)[shape->current_slice].count = count;
+    }
     shape->render.graph = (point_graph){
         .graph = shape->points_buffer.buffer,
         .num_points = count,
-        .slices = &shape->slice,
-        .num_slices = 1,
+        .slices = shape->slice_buffer.buffer,
+        .num_slices = shape->render.graph.num_slices,
         .size = vector2_sub(shape->max, shape->min)
     };
     print("Recalc'd shape with new min %f,%f max %f,%f points: %i",shape->min.x,shape->min.y,shape->max.x,shape->max.y,shape->render.graph.num_points);
@@ -382,12 +392,11 @@ int main(int argc, char *argv[]){
         
         mouse_data mouse = {};
         get_mouse_status(&mouse);
-        // if (!uno_dispatch_mouse(mouse, current_modifier)){
-            // print("Falling through");
+        if (!uno_dispatch_mouse(mouse, current_modifier)){
             mouse_handle(mouse, dtms);
-        // }
+        }
         
-        // uno_draw(&ctx);
+        uno_draw(&ctx);
         
         commit_draw_ctx(&ctx);
     }
