@@ -60,8 +60,8 @@ void recalc_shape(shape_t *shape, vector_point *new_point){
         vec2 loc = vector2_scale(new_point->location,zoom);
         if (loc.x < shape->min.x){ recalc_all = true; shape->min.x = loc.x; }
         if (loc.y < shape->min.y){ recalc_all = true; shape->min.y = loc.y; }
-        if (loc.x > shape->max.x){ recalc_all = false; shape->max.x = loc.x; }
-        if (loc.y > shape->max.y){ recalc_all = false; shape->max.y = loc.y; }
+        if (loc.x > shape->max.x){ shape->max.x = loc.x; }
+        if (loc.y > shape->max.y){ shape->max.y = loc.y; }
     }
     size_t count = linked_list_count(shape->shape);
     if (!shape->points_buffer.buffer) shape->points_buffer = buffer_create(sizeof(point_entry) * count, buffer_can_grow);
@@ -121,7 +121,7 @@ void render_shape(shape_t *shape){
         .color = shape->fill_color,
         .outline_color = shape->outline_color,
         .scale = 1,
-        .ignore_char = true,
+        .sizing_policy = path_render_sizing_none,
         .type = path_render_outline | path_render_fill
     });
     for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
