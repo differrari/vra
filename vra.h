@@ -12,7 +12,7 @@ typedef struct {
     vec2 middle;
 } shape_render_info;
 
-typedef struct shape_t{
+typedef struct shape_t {
     vec2 min, max;
     shape_render_info render;
     linked_list_t *shape;

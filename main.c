@@ -19,6 +19,7 @@
 #include "ui.h"
 #include "export.h"
 #include "editor.h"
+#include "mouse_helper.h"
 
 bool snap_on = false, show_handle = true;
 
@@ -108,12 +109,12 @@ void render_canvas(aabb2 *layer){
     fb_fill_rect(&ctx, pan.x + copy.min.x, pan.y + copy.min.y, copy.max.x-copy.min.x, copy.max.y-copy.min.y, 0x77203984);
 }
 
-bool clicked = false;
+
 shape_t *out_shape = 0;
 linked_list_node_t *out_node = 0;
 
-void shapes_click(bool clicked, gpu_point loc, gpu_point non_snap, bool is_mod){
-    if (!clicked) return;
+void shapes_click(gpu_point loc, gpu_point non_snap, bool is_mod){
+    if (click_status != click_start) return;
     find_point_handle(non_snap, &out_shape, &out_node);
     if (is_mod && out_shape && out_node){
         delete_point(out_shape,out_node);
@@ -134,12 +135,12 @@ void shapes_click(bool clicked, gpu_point loc, gpu_point non_snap, bool is_mod){
 bool started_canvas = false;
 gpu_point canvas_start = {};
 
-void canvas_click(bool clicked, gpu_point loc, gpu_point non_snap, bool is_mod){
-    if (clicked){ 
+void canvas_click(gpu_point loc, gpu_point non_snap, bool is_mod){
+    if (click_status == click_start){ 
         if (!started_canvas) canvas_start = loc;
         started_canvas = true;
     }
-    else if (started_canvas){
+    else if (started_canvas && click_status == click_release){
         started_canvas = false;
         enable_manual_canvas();
         register_new_canvas(canvas_start, loc);
@@ -164,22 +165,17 @@ void mouse_handle(mouse_data mouse, u64 dtms){
         loc.y = round_to_int((float)loc.y/grid_size) * grid_size;
     }
     
-    if (mouse_button_down(&mouse, LMB)){
-        if (!clicked){
-            clicked = true;
-        }
-    } else {
-        clicked = false;
+    if (mouse_up()){
         out_shape = 0;
         out_node = 0;
     }
     
     switch (editor_layer) {
-        case editor_layer_shapes: shapes_click(clicked, loc, non_snap, is_mod); break;
-        case editor_layer_canvases: canvas_click(clicked, loc, non_snap, is_mod); break;
+        case editor_layer_shapes: shapes_click(loc, non_snap, is_mod); break;
+        case editor_layer_canvases: canvas_click(loc, non_snap, is_mod); break;
     }
 
-    if (clicked && !is_mod && out_shape && out_node)
+    if ((click_status == click_start || click_status == click_continue) && !is_mod && out_shape && out_node)
         move_point(out_shape,out_node,loc);
 }
 
