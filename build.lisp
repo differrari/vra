@@ -1,25 +1,13 @@
 (load "~/redbuild/packaging/packager.lisp")
 (load "~/redbuild/v3/redbuild.lisp")
 
-(redbuild:make "~/diylib" "-j")
+(redbuild:set-global-target :redacted)
 
-(redbuild:set-global-target (redbuild:native))
+(redbuild:rebuild-sharedlib)
 
 (redbuild:build-dep "~/uno")
 
 (defvar pname "vra")
-
-(defun pkginstall (pname pack) 
-    (if (or (eq (redbuild:dyn-target) :redacted) *should_package*)
-        (generate-build pack (redbuild:dyn-target))
-    )
-    (if (eq (redbuild:dyn-target) :redacted)
-        (progn
-            (redbuild:install (concatenate `string pname ".red"))
-            (redbuild:make "~/os" "run")
-        )
-    )
-)
 
 (redbuild:quick-build (redbuild:make-instance `redbuild:redmod
     :name pname
