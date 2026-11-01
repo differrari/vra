@@ -29,7 +29,8 @@ enum {
 
 enum {
     ui_tag_invalid,
-    ui_tag_newshape
+    ui_tag_newshape,
+    ui_tag_shape
 } ui_tags;
 
 draw_ctx ctx = { .width = 1920/2, .height = 1080/2 };
@@ -65,6 +66,14 @@ u64 point_count;
 
 linked_list_t *shape_list;
 #define all_shapes(action) for (linked_list_node_t *head = shape_list->head; head; head = head->next) { shape_t *shape = head->data; if (!shape) continue; action }
+linked_list_t *selected_list;
+
+linked_list_node_t* is_selected(shape_t *s){
+    if (!selected_list) return 0;
+    for (linked_list_node_t *head = selected_list->head; head; head = head->next)
+        if (head->data == s) return head;
+    return 0;
+}
 
 buffer serialize(){
     size_t shape_count = linked_list_count(shape_list);
@@ -215,7 +224,7 @@ void render_shape(shape_t *shape){
        .y = shape->min.y + pan.y,
     }, shape->render.graph, (path_render_options){
         .color = shape->render.fill_color,
-        .outline_color = shape->render.outline_color,
+        .outline_color = is_selected (shape) ? palette.accent : shape->render.outline_color,
         .scale = 1,
         .sizing_policy = path_render_sizing_none,
         .type = path_render_outline | path_render_fill
@@ -229,12 +238,16 @@ void render_shape(shape_t *shape){
     }
 }
 
-void on_zoom(float z){
-    if (!shape_list) return;
+void recalc_all(){
     all_shapes({
         recalc_shape_size(shape);
         recalc_shape(shape, 0);
     })
+}
+
+void on_zoom(float z){
+    if (!shape_list) return;
+    recalc_all();
 }
 
 shape_t* new_shape(){
@@ -279,27 +292,44 @@ bool find_point_handle(gpu_point p, shape_t **out_shape, linked_list_node_t **ou
 }
 
 void new_shape_pressed(int tag, gpu_point point){
-    print("Am i not clicking");
     current_shape = new_shape();
+}
+
+void shape_select_toggle(int tag, gpu_point point){
+    tag -= ui_tag_shape;
+    shape_t *s = linked_list_get(shape_list, tag);
+    if (!s) return;
+    linked_list_node_t *sel = is_selected(s);
+    if (sel)
+        linked_list_remove(selected_list, sel);
+    else
+        linked_list_push(selected_list, s);
+    recalc_all();
+    uno_refresh();
 }
 
 button_info new_shape_bi = {
     .press = new_shape_pressed
 };
 
-buffer temp_ui_strings;
+button_info select_shape_bi = {
+    .press = shape_select_toggle
+};
+
+void *ui_strings_page;
 
 void ui_builder(){
-    if (!temp_ui_strings.buffer) temp_ui_strings = buffer_create(0x1000, buffer_can_grow);
-    else buffer_wipe(&temp_ui_strings);
+    if (ui_strings_page) release_page_all(ui_strings_page);
+    ui_strings_page = page_alloc(PAGE_SIZE);
     HORIZONTAL((node_info){ .sizing_rule = size_fill}, {
         SPACER
         VERTICAL(((node_info){ .sizing_rule = size_relative, .percentage = 0.2f, .bg_color = 0xbb4382 }), {
             int count = 0;
             all_shapes({
-                uptr start = temp_ui_strings.cursor;
-                buffer_write(&temp_ui_strings, "Shape %i", count++);//NOTE: if the buffer is resized, all the previous strings might get lost
-                uno_label((node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, doc_text_heading, (string_slice){.data = temp_ui_strings.buffer + start, temp_ui_strings.cursor-start});
+                char *s = allocate(ui_strings_page,256,page_alloc);
+                size_t n = string_format_buf(s, 256, "%sShape %i", is_selected(shape) ? "[S]" : "", count);
+                uno_button(ui_tag_shape + count, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &select_shape_bi, (string_slice){s,n});
+                count++;
             });
             SPACER
             uno_button(ui_tag_newshape, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &new_shape_bi, SLICE("New shape"));
@@ -356,6 +386,7 @@ int main(int argc, char *argv[]){
     request_app_ctx(&ctx);
     
     shape_list = linked_list_create();
+    selected_list = linked_list_create();
     
     profiler_init();
     
