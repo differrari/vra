@@ -33,8 +33,15 @@ enum {
 enum {
     ui_tag_invalid,
     ui_tag_newshape,
+    ui_tag_join,
+    ui_tag_snap,
+    ui_tag_export,
+    ui_tag_show_handle,
+    //NOTE: Leave the following tag last as it is an indexed tag (tag = this + index)
     ui_tag_shape
 } ui_tags;
+
+bool snap_on = false, show_handle = true;
 
 draw_ctx ctx = { .width = 1920/2, .height = 1080/2 };
 
@@ -317,6 +324,8 @@ shape_t* new_shape(){
     shape->render.outline_color = current_shape_outline;
     linked_list_push(shape_list, shape);
     uno_refresh();
+    current_shape = shape;
+    linked_list_push(selected_list, shape);
     return shape;
 }
 
@@ -332,6 +341,24 @@ void prototype_color_pciker(){
             }))).color);
         }
     }
+}
+
+void join_contours(){
+    shape_t *latest = 0;
+    selected_shapes({
+        if (latest) {
+            shape->contour_of = latest;
+            latest->link = shape;
+        } else {
+            current_shape = shape;
+            shape->contour_of = 0;
+        }
+        latest = shape;
+    });
+    mog(INFO,"Joined %i contours",linked_list_count(selected_list));
+    unselect_all();
+    recalc_all();
+    uno_refresh();
 }
 
 bool find_point_handle(gpu_point p, shape_t **out_shape, linked_list_node_t **out_node){
@@ -354,7 +381,7 @@ bool find_point_handle(gpu_point p, shape_t **out_shape, linked_list_node_t **ou
 }
 
 void new_shape_pressed(int tag, gpu_point point){
-    current_shape = new_shape();
+    new_shape();
 }
 
 void shape_select_toggle(int tag, gpu_point point){
@@ -372,12 +399,24 @@ void shape_select_toggle(int tag, gpu_point point){
     uno_refresh();
 }
 
-button_info new_shape_bi = {
-    .press = new_shape_pressed
-};
+void toolbar_press(int tag, gpu_point p){
+    switch (tag){
+        case ui_tag_newshape: new_shape(); break;
+        case ui_tag_join: join_contours(); break;
+        case ui_tag_snap: snap_on = !snap_on; break;
+        case ui_tag_export: serialize(); break;
+        case ui_tag_show_handle: show_handle = !show_handle; hide_handles = !show_handle; break;
+        default: return;
+    }
+    uno_refresh();
+}
 
 button_info select_shape_bi = {
     .press = shape_select_toggle
+};
+
+button_info core_actions_bi = {
+    .press = toolbar_press
 };
 
 void *ui_strings_page;
@@ -386,8 +425,21 @@ void ui_builder(){
     if (ui_strings_page) release_page_all(ui_strings_page);
     ui_strings_page = page_alloc(PAGE_SIZE);
     HORIZONTAL((node_info){ .sizing_rule = size_fill}, {
+        VERTICAL(((node_info){.sizing_rule = size_fill}), {
+            HORIZONTAL(((node_info){ .padding = 30, .bg_color = 0xff676767 }), {
+                uno_button(ui_tag_newshape,((node_info){ .padding = 5 }), &core_actions_bi, SLICE("New shape"));
+                SPACER
+                uno_button(ui_tag_join,((node_info){ .padding = 5 }), &core_actions_bi, SLICE("Join"));
+                uno_label(((node_info){ .padding = 5 }), doc_text_body, SLICE("|"));
+                SPACER
+                uno_button(ui_tag_snap,((node_info){ .padding = 5 }), &core_actions_bi, SLICE(snap_on ? "Free place" : "Snap to grid"));
+                uno_button(ui_tag_show_handle,((node_info){ .padding = 5 }), &core_actions_bi, SLICE(show_handle ? "Hide handles" : "Show handles"));
+                uno_button(ui_tag_export,((node_info){ .padding = 5 }), &core_actions_bi, SLICE("Export"));
+            });
+            SPACER
+        });
         SPACER
-        VERTICAL(((node_info){ .sizing_rule = size_relative, .percentage = 0.2f, .bg_color = 0xbb4382 }), {
+        VERTICAL(((node_info){ .sizing_rule = size_relative, .percentage = 0.2f, .bg_color = 0xff767676 }), {
             int count = 0;
             all_shapes({
                 char *s = allocate(ui_strings_page,256,page_alloc);
@@ -401,7 +453,7 @@ void ui_builder(){
                 count++;
             });
             SPACER
-            uno_button(ui_tag_newshape, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &new_shape_bi, SLICE("New shape"));
+            uno_button(ui_tag_newshape, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &core_actions_bi, SLICE("New shape"));
         });
     });
 }
@@ -419,7 +471,7 @@ void mouse_handle(mouse_data mouse, u64 dtms){
     gpu_point loc = mouse.position;
     loc.x -= pan.x;
     loc.y -= pan.y;
-    if (is_mod_pressed(KEY_LEFTALT, true)){
+    if (is_mod_pressed(KEY_LEFTALT, true) || snap_on){
         loc.x = round_to_int((float)loc.x/grid_size) * grid_size;
         loc.y = round_to_int((float)loc.y/grid_size) * grid_size;
     }
@@ -427,7 +479,7 @@ void mouse_handle(mouse_data mouse, u64 dtms){
     if (mouse_button_down(&mouse, LMB)){
         if (!clicked){
             clicked = true;
-            find_point_handle(loc, &out_shape, &out_node);
+            find_point_handle(mouse.position, &out_shape, &out_node);
             if (is_mod && out_shape && out_node){
                 delete_point(out_shape,out_node);
                 out_shape = 0;
@@ -437,7 +489,7 @@ void mouse_handle(mouse_data mouse, u64 dtms){
                     if (shape_list->tail)
                         current_shape = shape_list->tail->data;
                     if (!current_shape){
-                        current_shape = new_shape();
+                        new_shape();
                     }
                 }
                 append_point(current_shape,loc, is_mod);
@@ -451,24 +503,6 @@ void mouse_handle(mouse_data mouse, u64 dtms){
 
     if (clicked && !is_mod && out_shape && out_node)
         move_point(out_shape,out_node,loc);
-}
-
-void join_contours(){
-    shape_t *latest = 0;
-    selected_shapes({
-        if (latest) {
-            shape->contour_of = latest;
-            latest->link = shape;
-        } else {
-            current_shape = shape;
-            shape->contour_of = 0;
-        }
-        latest = shape;
-    });
-    mog(INFO,"Joined %i contours",linked_list_count(selected_list));
-    unselect_all();
-    recalc_all();
-    uno_refresh();
 }
 
 int main(int argc, char *argv[]){
@@ -504,19 +538,18 @@ int main(int argc, char *argv[]){
             if (!handle_modifier(&ev)){
                 if (ev.type == KEY_PRESS){
                     if (is_mod_pressed(KEY_LEFTALT, true) && ev.key == KEY_ESC) halt(0);
-                    if (ev.key == KEY_TAB) current_shape = new_shape();
+                    if (ev.key == KEY_TAB) new_shape();
                     if (ev.key == KEY_ENTER) serialize();
                     if (ev.key == KEY_J) join_contours();
                 }
-                hide_handles = ev.key == KEY_U && ev.type != KEY_RELEASE;
+                hide_handles = ev.key == KEY_U && ev.type != KEY_RELEASE || !show_handle;
             }
         }
         
         mouse_data mouse = {};
         get_mouse_status(&mouse);
-        if (!uno_dispatch_mouse(mouse, current_modifier)){
+        if (!uno_dispatch_mouse(mouse, current_modifier))
             mouse_handle(mouse, dtms);
-        }
         
         uno_draw(&ctx);
         
