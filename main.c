@@ -120,6 +120,7 @@ void mouse_handle(mouse_data mouse, u64 dtms){
     loc.y -= pan.y;
     loc.x /= zoom;
     loc.y /= zoom;
+    gpu_point non_snap = loc;
     if (is_mod_pressed(KEY_LEFTALT, true) || snap_on){
         loc.x = round_to_int((float)loc.x/grid_size) * grid_size;
         loc.y = round_to_int((float)loc.y/grid_size) * grid_size;
@@ -128,7 +129,7 @@ void mouse_handle(mouse_data mouse, u64 dtms){
     if (mouse_button_down(&mouse, LMB)){
         if (!clicked){
             clicked = true;
-            find_point_handle(loc, &out_shape, &out_node);
+            find_point_handle(non_snap, &out_shape, &out_node);
             if (is_mod && out_shape && out_node){
                 delete_point(out_shape,out_node);
                 out_shape = 0;
