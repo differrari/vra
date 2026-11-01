@@ -7,21 +7,14 @@
 #include "utils/theme.h"
 #include "draw/pathdraw.h"
 #include "debug/profiler.h"
+#include "header_utils/infcanvas.h"
 
 enum {
     action_drawing,
     action_panning,
 } current_action;
 
-int grid_size = 100;
-
-float zoom = 1;
-
-float scroll_speed = 0.3f;
-
 draw_ctx ctx = { .width = 1920/2, .height = 1080/2 };
-
-gpu_point pan;
 
 typedef struct {
     vec2 location;
@@ -139,6 +132,11 @@ void render_shape(shape_t *shape){
     }
 }
 
+void on_zoom(float z){
+    recalc_shape_size(current_shape);
+    recalc_shape(current_shape, 0);
+}
+
 int main(int argc, char *argv[]){
     request_app_ctx(&ctx);
     
@@ -150,24 +148,13 @@ int main(int argc, char *argv[]){
     
     profiler_init();
     
+    on_canvas_zoom = on_zoom;
+    
     while (!should_close_ctx()){
         
         u64 dtms = profiler_delta();
         
-        fb_clear(&ctx, palette.background);
-        
-        int current_grid_level = grid_size*zoom;
-        
-        gpu_point grid_pan = pan;
-        grid_pan.x %= current_grid_level;
-        grid_pan.y %= current_grid_level;
-        
-        for (int x = 0; x < ctx.width; x += current_grid_level){
-            fb_draw_line(&ctx, x+grid_pan.x, grid_pan.y, x+grid_pan.x, ctx.height + grid_pan.y, palette.foreground);
-        }
-        for (int y = 0; y < ctx.height; y += current_grid_level){
-            fb_draw_line(&ctx, grid_pan.x, y+grid_pan.y, ctx.width+grid_pan.x, y+grid_pan.y, palette.foreground);
-        }
+        canvas_background(&ctx, palette.background, palette.foreground);
         
         if (current_shape){
             render_shape(current_shape);
@@ -185,9 +172,7 @@ int main(int argc, char *argv[]){
         mouse_data mouse = {};
         get_mouse_status(&mouse);
         
-        if (mouse_button_down(&mouse, MMB)){
-            current_action = action_panning;
-        } else current_action = action_drawing;
+        canvas_mouse(mouse, 1.f/dtms);
         
         if (mouse_button_down(&mouse, LMB)){
             if (!clicked){
@@ -195,18 +180,6 @@ int main(int argc, char *argv[]){
                 append_point(current_shape,mouse.position, false);
             }
         } else clicked = false;
-        
-        if (mouse.raw.scroll){
-            zoom += mouse.raw.scroll * 1.f/dtms;
-            zoom = clampf(zoom, 1.f, 10.f);
-            recalc_shape_size(current_shape);
-            recalc_shape(current_shape, 0);
-        }
-        
-        if (current_action == action_panning){
-            pan.x += mouse.raw.x;
-            pan.y += mouse.raw.y;
-        }
         
         commit_draw_ctx(&ctx);
     }
