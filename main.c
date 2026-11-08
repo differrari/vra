@@ -165,6 +165,8 @@ void mouse_handle(mouse_data mouse, u64 dtms){
         loc.y = round_to_int((float)loc.y/grid_size) * grid_size;
     }
     
+    process_mouse(mouse);
+    
     if (mouse_up()){
         out_shape = 0;
         out_node = 0;
