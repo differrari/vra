@@ -3,5 +3,6 @@
 editor.c
 export.c
 main.c
+save.c
 select.c
 ui.c

@@ -57,7 +57,7 @@ void serialize(){
         size_t shape_count = 0;
         vro_header hdr = {
             .hdr_version = VERSION_NUM(0, 1, 0, 0),
-            .magic = MAGIC_NUM,
+            .magic = VRO_MAGIC_NUM,
             .num_shapes = 0
         };
         buffer_write_lim(&buf, (char*)&hdr, sizeof(vro_header));

@@ -3,6 +3,7 @@
 #include "vra.h"
 #include "vro.h"
 #include "files/buffer.h"
+#include "math/aabb2.h"
 
 void serialize();
 extern linked_list_t *export_canvases;

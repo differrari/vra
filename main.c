@@ -20,6 +20,7 @@
 #include "export.h"
 #include "editor.h"
 #include "mouse_helper.h"
+#include "save.h"
 
 bool snap_on = false, show_handle = true;
 
@@ -188,6 +189,12 @@ int main(int argc, char *argv[]){
     selected_list = linked_list_create();
     export_canvases = linked_list_create();
     
+    char *TMP_save = "/home/di/vra/test/test_file.vra";
+    fs_stat out_stat = {};
+    if (statf(TMP_save, &out_stat)){
+        restore_file(TMP_save);
+    }
+    
     profiler_init();
     
     on_canvas_zoom = on_zoom;
@@ -230,6 +237,8 @@ int main(int argc, char *argv[]){
                     if (ev.key == KEY_ENTER) serialize();
                     if (ev.key == KEY_J) join_contours();
                     if (ev.key == KEY_I) invert();
+                    if (ev.key == KEY_M) order_manual();
+                    if (is_mod_pressed(KEY_LEFTCTRL, true) && ev.key == KEY_S) save_file();
                 }
                 bool new_el = ev.key == KEY_L && ev.type != KEY_RELEASE ? editor_layer_canvases : editor_layer_shapes;
                 bool need_refresh = new_el != editor_layer;

@@ -1,7 +1,7 @@
 (load "~/redbuild/packaging/packager.lisp")
 (load "~/redbuild/v3/redbuild.lisp")
 
-(redbuild:set-global-target :redacted)
+(redbuild:set-global-target (redbuild:native))
 
 (redbuild:rebuild-sharedlib)
 

@@ -2,7 +2,7 @@
 
 #include "types.h"
 
-#define MAGIC_NUM 0xEC70
+#define VRO_MAGIC_NUM 0xEC70
 
 typedef struct {
     u16 magic;

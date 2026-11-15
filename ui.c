@@ -68,7 +68,11 @@ void ui_shapes(){
         if (is_selected(shape)) buffer_write_const(&b, "S");
         if (shape->contour_of) buffer_write_const(&b, "c");
         else if (shape->link) buffer_write_const(&b, "C");
-        buffer_write_const(&b, shape->counter_clockwise ? "<" : ">");
+        switch (shape->order){
+            case shape_ordering_clockwise: buffer_write_const(&b, ">"); break;
+            case shape_ordering_counter_clockwise: buffer_write_const(&b, "<"); break;
+            case shape_ordering_manual: buffer_write_const(&b, "M"); break;
+        }
         buffer_write(&b,"] Shape %i",count);
         uno_button(ui_tag_shape + count, (node_info){ .sizing_rule = size_fit, .fg_color = 0xff333333, }, &select_shape_bi, (string_slice){s,b.buffer_size});
         count++;

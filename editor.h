@@ -29,6 +29,10 @@ shape_t* new_shape();
 shape_t *new_contour();
 void join_contours();
 void invert();
+void order_manual();
 void recalc_shape_size(shape_t *shape);
 void recalc_slice(shape_t *shape,int start, int count);
 void recalc_shape(shape_t *shape, vector_point *new_point);
+void save_editor();
+
+bool shape_sort(void *a, void *b, void *ctx);

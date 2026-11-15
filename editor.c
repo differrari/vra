@@ -6,6 +6,7 @@
 #include "utils/mog.h"
 #include "uno.h"
 #include "math/vector.h"
+#include "files/helpers.h"
 
 editor_layers editor_layer = editor_layer_shapes;
 
@@ -53,9 +54,10 @@ bool points_clockwise(vector_point *a, vector_point *b, shape_t *s){
 bool shape_sort(void *a, void *b, void *ctx){
     if (!ctx || !a || !b) return false;
     shape_t *s = ctx;
+    if (s->order == shape_ordering_manual) return false;
     vector_point *ap = a;
     vector_point *bp = b;
-    return s->counter_clockwise ^ points_clockwise(ap, bp, s);
+    return (s->order == shape_ordering_counter_clockwise) ^ points_clockwise(ap, bp, s);
 }
 
 void append_point(shape_t *shape, int_point point, bool control){
@@ -126,7 +128,11 @@ shape_t *new_contour(){
     while (last->link) last = last->link;
     shape->contour_of = last;
     last->link = shape;
-    shape->counter_clockwise = !last->counter_clockwise;
+    switch (last->order){
+        case shape_ordering_clockwise: shape->order = shape_ordering_counter_clockwise; break;
+        case shape_ordering_counter_clockwise: shape->order = shape_ordering_clockwise; break;
+        case shape_ordering_manual: shape->order  = shape_ordering_manual; break;
+    }
     current_shape = shape;
     linked_list_clear(selected_list);
     linked_list_push(selected_list, parent);
@@ -158,8 +164,24 @@ void join_contours(){
 
 void invert(){
     selected_shapes({
-        shape->counter_clockwise = !shape->counter_clockwise;
-        linked_list_sort(shape->shape, shape, shape_sort);
+        switch (shape->order){
+            case shape_ordering_clockwise: shape->order = shape_ordering_counter_clockwise; break;
+            case shape_ordering_counter_clockwise: shape->order = shape_ordering_clockwise; break;
+            case shape_ordering_manual: shape->order  = shape_ordering_manual; break;
+        }
+        if (shape->order != shape_ordering_manual) linked_list_sort(shape->shape, shape, shape_sort);
+    });
+    recalc_all();
+    uno_refresh();
+}
+
+void order_manual(){
+    selected_shapes({
+        if (shape->order == shape_ordering_manual)
+            shape->order = shape_ordering_clockwise;
+        else 
+            shape->order = shape_ordering_manual;
+        if (shape->order != shape_ordering_manual) linked_list_sort(shape->shape, shape, shape_sort);
     });
     recalc_all();
     uno_refresh();
