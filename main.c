@@ -89,15 +89,10 @@ bool find_point_handle(gpu_point p, shape_t **out_shape, linked_list_node_t **ou
         if (!shape->shape) continue;
         if (shape->contour_of && !is_selected(shape)) continue;
         vec2 v = ((vec2){p.x,p.y});
-        for (linked_list_node_t *head = shape->shape->head; head; head = head->next){
-            vector_point *p = head->data;
-            if (!p) continue;
-            aabb2 ab = ((aabb2){.min = vector2_sub(p->location, (vector2){handle_size/2.f, handle_size/2.f}), .max = vector2_add(p->location, (vector2){handle_size/2.f, handle_size/2.f})});
-            if (aabb_point_intersect(ab, v)) {
-                if (out_shape) *out_shape = shape;
-                if (out_node) *out_node = head;
-                return true;
-            }
+        linked_list_node_t *n = find_vector_point(shape->shape,v,handle_size);
+        if (n){
+            if (out_node) *out_node = n;
+            if (out_shape) *out_shape = shape;
         }
     })
     return false;

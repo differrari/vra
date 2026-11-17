@@ -76,40 +76,7 @@ void append_point(shape_t *shape, int_point point, bool control){
         shape->max = (vec2){};
     }
     bool need_reorder = !shape_sort(shape->shape->tail, p, shape);
-    i64 inserted_index = -1;
-    if (shape->order == shape_ordering_manual){
-        if (linked_list_count(shape->shape) > 1){//TODO: This needs to handle bezier curves, it needs to keep track of up to two points besides the current and sample on the bezier
-            linked_list_node_t *last_node = shape->shape->head;
-            for (linked_list_node_t *node = shape->shape->head->next; node; node = node->next){
-                vec2 last = ((vector_point*)last_node->data)->location;
-                vec2 next = vector2_sub(((vector_point*)node->data)->location,last);
-                float dist = 0;
-                if (aabb2_line_intersect((aabb2){
-                    .min = (vector2){p->location.x-15,p->location.y-15},
-                    .max = (vector2){p->location.x+15,p->location.y+15}
-                }, last, next, &dist, 0) && dist <= 1.f ){
-                    linked_list_node_t *new_node = linked_list_insert_after(shape->shape, last_node, p);
-                    inserted_index = linked_list_index_of_node(shape->shape, new_node);
-                    break;
-                }
-                last_node = node;
-            }
-        }
-        if (inserted_index < 0) {
-            if (shape->latest_point >= 0){
-                linked_list_node_t *latest = linked_list_get_node(shape->shape, shape->latest_point);
-                if (latest) {
-                    linked_list_node_t *new_node = linked_list_insert_after(shape->shape, latest, p);
-                    inserted_index = linked_list_index_of_node(shape->shape, new_node);
-                }
-            }
-        }
-    } 
-    
-    if (inserted_index < 0) {
-        linked_list_node_t *new_node = linked_list_push(shape->shape, p);
-        inserted_index = linked_list_index_of_node(shape->shape, new_node);
-    }
+    i64 inserted_index = insert_vector_point(shape->shape, p, shape->latest_point);
     if (shape->order != shape_ordering_manual) linked_list_sort(shape->shape, shape, shape_sort);
     shape->latest_point = inserted_index;
     recalc_shape_size(shape);

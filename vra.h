@@ -4,6 +4,7 @@
 #include "draw/point_graph.h"
 #include "data/struct/linked_list.h"
 #include "files/buffer.h"
+#include "header_utils/vector_point.h"
 
 typedef struct {
     color outline_color;
@@ -26,11 +27,6 @@ typedef struct shape_t {
     struct shape_t *contour_of;
     struct shape_t *link;
 } shape_t;
-
-typedef struct {
-    vec2 location;
-    bool control;
-} vector_point;
 
 extern linked_list_t *shape_list;
 #define all_shapes(action) for (linked_list_node_t *all_shapes_head = shape_list->head; all_shapes_head; all_shapes_head = all_shapes_head->next) { shape_t *shape = all_shapes_head->data; if (!shape) continue; action }
