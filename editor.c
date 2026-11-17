@@ -61,6 +61,10 @@ bool shape_sort(void *a, void *b, void *ctx){
     return (s->order == shape_ordering_counter_clockwise) ^ points_clockwise(ap, bp, s);
 }
 
+bool shape_manual_invert(void *a, void *b, void *ctx){
+    return false;
+}
+
 void append_point(shape_t *shape, int_point point, bool control){
     if (shape->contour_of && !is_selected(shape)) return;
     vector_point *p = new(vector_point);
@@ -202,9 +206,9 @@ void invert(){
         switch (shape->order){
             case shape_ordering_clockwise: shape->order = shape_ordering_counter_clockwise; break;
             case shape_ordering_counter_clockwise: shape->order = shape_ordering_clockwise; break;
-            case shape_ordering_manual: shape->order  = shape_ordering_manual; break;
+            case shape_ordering_manual: shape->order = shape_ordering_manual; break;
         }
-        if (shape->order != shape_ordering_manual) linked_list_sort(shape->shape, shape, shape_sort);
+        linked_list_sort(shape->shape, shape, shape->order == shape_ordering_manual ? shape_manual_invert : shape_sort);
     });
     recalc_all();
     uno_refresh();
