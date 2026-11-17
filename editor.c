@@ -79,10 +79,11 @@ void append_point(shape_t *shape, int_point point, bool control){
             for (linked_list_node_t *node = shape->shape->head->next; node; node = node->next){
                 vec2 last = ((vector_point*)last_node->data)->location;
                 vec2 next = vector2_sub(((vector_point*)node->data)->location,last);
+                float dist = 0;
                 if (aabb2_line_intersect((aabb2){
                     .min = (vector2){p->location.x-15,p->location.y-15},
                     .max = (vector2){p->location.x+15,p->location.y+15}
-                }, last, next, 0, 0)){
+                }, last, next, &dist, 0) && dist <= 1.f ){
                     linked_list_node_t *new_node = linked_list_insert_after(shape->shape, last_node, p);
                     inserted_index = linked_list_index_of_node(shape->shape, new_node);
                     break;
