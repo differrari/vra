@@ -12,7 +12,7 @@ typedef struct {
     vec2 middle;
 } shape_render_info;
 
-typedef enum { shape_ordering_clockwise, shape_ordering_counter_clockwise, shape_ordering_manual } shape_ordering;
+typedef enum { shape_ordering_manual, shape_ordering_clockwise, shape_ordering_counter_clockwise } shape_ordering;
 
 typedef struct shape_t {
     vec2 min, max;
@@ -21,6 +21,7 @@ typedef struct shape_t {
     buffer points_buffer;
     buffer slice_buffer;
     int current_slice;
+    i64 latest_point;
     shape_ordering order;
     struct shape_t *contour_of;
     struct shape_t *link;

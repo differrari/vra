@@ -6,6 +6,7 @@
 #include "utils/mog.h"
 #include "uno.h"
 #include "math/vector.h"
+#include "math/aabb2.h"
 #include "files/helpers.h"
 
 editor_layers editor_layer = editor_layer_shapes;
@@ -52,9 +53,9 @@ bool points_clockwise(vector_point *a, vector_point *b, shape_t *s){
 }
 
 bool shape_sort(void *a, void *b, void *ctx){
-    if (!ctx || !a || !b) return false;
+    if (!ctx || !a || !b) return true;  
     shape_t *s = ctx;
-    if (s->order == shape_ordering_manual) return false;
+    if (s->order == shape_ordering_manual) return true;
     vector_point *ap = a;
     vector_point *bp = b;
     return (s->order == shape_ordering_counter_clockwise) ^ points_clockwise(ap, bp, s);
@@ -71,18 +72,51 @@ void append_point(shape_t *shape, int_point point, bool control){
         shape->max = (vec2){};
     }
     bool need_reorder = !shape_sort(shape->shape->tail, p, shape);
-    linked_list_push(shape->shape, p);
-    // if (need_reorder){
-        linked_list_sort(shape->shape, shape, shape_sort);
-        recalc_shape_size(shape);
-        recalc_shape(shape, 0);
-    // } else recalc_shape(shape, p);
+    i64 inserted_index = -1;
+    if (shape->order == shape_ordering_manual){
+        if (linked_list_count(shape->shape) > 1){//TODO: This needs to handle bezier curves, it needs to keep track of up to two points besides the current and sample on the bezier
+            linked_list_node_t *last_node = shape->shape->head;
+            for (linked_list_node_t *node = shape->shape->head->next; node; node = node->next){
+                vec2 last = ((vector_point*)last_node->data)->location;
+                vec2 next = vector2_sub(((vector_point*)node->data)->location,last);
+                if (aabb2_line_intersect((aabb2){
+                    .min = (vector2){p->location.x-15,p->location.y-15},
+                    .max = (vector2){p->location.x+15,p->location.y+15}
+                }, last, next, 0, 0)){
+                    linked_list_node_t *new_node = linked_list_insert_after(shape->shape, last_node, p);
+                    inserted_index = linked_list_index_of_node(shape->shape, new_node);
+                    break;
+                }
+                last_node = node;
+            }
+        }
+        if (inserted_index < 0) {
+            if (shape->latest_point >= 0){
+                linked_list_node_t *latest = linked_list_get_node(shape->shape, shape->latest_point);
+                if (latest) {
+                    linked_list_node_t *new_node = linked_list_insert_after(shape->shape, latest, p);
+                    inserted_index = linked_list_index_of_node(shape->shape, new_node);
+                }
+            }
+        }
+    } 
+    
+    if (inserted_index < 0) {
+        linked_list_node_t *new_node = linked_list_push(shape->shape, p);
+        inserted_index = linked_list_index_of_node(shape->shape, new_node);
+    }
+    if (shape->order != shape_ordering_manual) linked_list_sort(shape->shape, shape, shape_sort);
+    shape->latest_point = inserted_index;
+    recalc_shape_size(shape);
+    recalc_shape(shape, 0);
     point_count++;
 }
+
 void move_point(shape_t *shape, linked_list_node_t *point_node, gpu_point new_pos){
     if (!shape || !shape->shape || !point_node) return;
     if (current_shape != shape && !is_selected(shape)) return;
     vector_point *p = point_node->data;
+    shape->latest_point = linked_list_index_of_node(shape->shape, point_node);
     if (!p) return;
     p->location = (vec2){ new_pos.x, new_pos.y };
     recalc_shape_size(shape);
